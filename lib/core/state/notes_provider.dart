@@ -26,6 +26,7 @@ class NotesProvider extends ChangeNotifier {
   Timer? _debounceSaveTimer;
   Map<String, int> _folderCounts = {};
   int _trashCount = 0;
+  bool _disposed = false;
 
   NotesProvider({
     required DatabaseService dbService,
@@ -33,7 +34,18 @@ class NotesProvider extends ChangeNotifier {
     required SyncService syncService,
   })  : _dbService = dbService,
         _vaultService = vaultService,
-        _syncService = syncService;
+        _syncService = syncService {
+    _syncService.addListener(_onSyncChanged);
+  }
+
+  void _onSyncChanged() {
+    if (_disposed) return;
+    if (!_syncService.isSyncing) {
+      refreshFolders();
+      refreshTags();
+      refreshNotes();
+    }
+  }
 
   List<Folder> get folders => _folders;
   List<Note> get notes => _notes;
@@ -122,6 +134,8 @@ class NotesProvider extends ChangeNotifier {
     // If currently selected note is no longer in the list, select first or null
     if (_selectedNoteId != null && !_notes.any((n) => n.id == _selectedNoteId)) {
       _selectedNoteId = _notes.isNotEmpty ? _notes.first.id : null;
+    } else if (_selectedNoteId == null && _notes.isNotEmpty) {
+      _selectedNoteId = _notes.first.id;
     }
 
     notifyListeners();
@@ -379,7 +393,16 @@ class NotesProvider extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (!_disposed) {
+      super.notifyListeners();
+    }
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
+    _syncService.removeListener(_onSyncChanged);
     _debounceSaveTimer?.cancel();
     super.dispose();
   }

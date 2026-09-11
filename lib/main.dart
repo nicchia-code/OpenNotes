@@ -59,7 +59,16 @@ void main() async {
   );
   await notesProvider.init();
 
-  // Populate sample note if first launch
+  // If user is already authenticated from previous session, sync cloud notes first
+  if (syncService.isAuthenticated) {
+    try {
+      await syncService.syncNow();
+    } catch (e) {
+      debugPrint('Initial startup sync error: $e');
+    }
+  }
+
+  // Populate sample note if first launch and no notes exist
   final existingNotes = await dbService.getNotes();
   if (existingNotes.isEmpty) {
     await _createWelcomeNotes(notesProvider);

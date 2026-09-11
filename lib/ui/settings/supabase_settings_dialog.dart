@@ -33,6 +33,17 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
           _statusMessage = 'Accesso Google non completato.';
           _isError = true;
         });
+      } else if (mounted) {
+        setState(() {
+          _statusMessage = 'Accesso completato! Sincronizzazione in corso...';
+          _isError = false;
+        });
+        await context.read<SyncService>().syncNow();
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Sincronizzazione completata con successo.';
+          });
+        }
       }
     } catch (e) {
       if (mounted) {

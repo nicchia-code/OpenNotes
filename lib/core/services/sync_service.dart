@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -19,6 +20,7 @@ class SyncService extends ChangeNotifier {
   String? _supabaseAnonKey;
   DateTime? _lastSyncedAt;
   RealtimeChannel? _realtimeChannel;
+  StreamSubscription<AuthState>? _authSubscription;
 
   SyncService(this._dbService, this._vaultService);
 
@@ -85,7 +87,13 @@ class SyncService extends ChangeNotifier {
       _supabaseAnonKey = anonKey.trim();
       _isConfigured = true;
 
-      _setupRealtimeSubscription();
+      _setupAuthListener();
+
+      if (isAuthenticated) {
+        _setupRealtimeSubscription();
+        syncNow();
+      }
+
       _isSyncing = false;
       notifyListeners();
       return true;
@@ -95,6 +103,31 @@ class SyncService extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+  }
+
+  /// Listens to Supabase Auth state changes to automatically connect Realtime and sync
+  void _setupAuthListener() {
+    _authSubscription?.cancel();
+    final client = _client;
+    if (client == null) return;
+
+    _authSubscription = client.auth.onAuthStateChange.listen((data) async {
+      final event = data.event;
+      final session = data.session;
+      debugPrint('SyncService onAuthStateChange: $event (hasSession: ${session != null})');
+
+      if (session != null &&
+          (event == AuthChangeEvent.signedIn ||
+           event == AuthChangeEvent.tokenRefreshed ||
+           event == AuthChangeEvent.initialSession)) {
+        _setupRealtimeSubscription();
+        await syncNow();
+      } else if (event == AuthChangeEvent.signedOut) {
+        _realtimeChannel?.unsubscribe();
+        _realtimeChannel = null;
+        notifyListeners();
+      }
+    });
   }
 
   /// Sets up Realtime WebSocket listener for notes and folders.
@@ -121,17 +154,46 @@ class SyncService extends ChangeNotifier {
             await _handleRemoteNoteChange(payload);
           },
         )
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'folders',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: user.id,
+          ),
+          callback: (payload) async {
+            debugPrint('Realtime change received for folders: ${payload.eventType}');
+            await _handleRemoteFolderChange(payload);
+          },
+        )
         .subscribe();
   }
 
   Future<void> _handleRemoteNoteChange(PostgresChangePayload payload) async {
+    final eventType = payload.eventType;
+    if (eventType == PostgresChangeEvent.delete) {
+      final oldRecord = payload.oldRecord;
+      final id = oldRecord['id'] as String?;
+      if (id != null) {
+        final localNote = await _dbService.getNoteById(id);
+        await _dbService.permanentlyDeleteNote(id);
+        if (localNote?.filePath != null) {
+          await _vaultService.deleteNoteFile(localNote!.filePath!);
+        }
+        notifyListeners();
+      }
+      return;
+    }
+
     final record = payload.newRecord;
     if (record.isNotEmpty) {
       final remoteNote = Note.fromSupabaseJson(record);
       final localNote = await _dbService.getNoteById(remoteNote.id);
 
-      // Only update if remote is newer
-      if (localNote == null || remoteNote.updatedAt.isAfter(localNote.updatedAt)) {
+      // Only update if remote is newer or does not exist locally
+      if (localNote == null || !localNote.updatedAt.isAfter(remoteNote.updatedAt)) {
         await _dbService.upsertNote(remoteNote);
         await _vaultService.saveNote(remoteNote);
         notifyListeners();
@@ -139,7 +201,27 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-  /// Triggers full bidirectional sync: pushes local queue, pulls remote updates.
+  Future<void> _handleRemoteFolderChange(PostgresChangePayload payload) async {
+    final eventType = payload.eventType;
+    if (eventType == PostgresChangeEvent.delete) {
+      final oldRecord = payload.oldRecord;
+      final id = oldRecord['id'] as String?;
+      if (id != null) {
+        await _dbService.deleteFolder(id);
+        notifyListeners();
+      }
+      return;
+    }
+
+    final record = payload.newRecord;
+    if (record.isNotEmpty) {
+      final remoteFolder = Folder.fromSupabaseJson(record);
+      await _dbService.upsertFolder(remoteFolder);
+      notifyListeners();
+    }
+  }
+
+  /// Triggers full bidirectional sync: pushes local queue & un-synced notes, pulls remote updates.
   Future<void> syncNow() async {
     final client = _client;
     final user = currentUser;
@@ -204,30 +286,57 @@ class SyncService extends ChangeNotifier {
         await _dbService.removeSyncAction(id);
       }
 
-      // 2. Pull remote changes
+      // 2. Fetch remote notes & folders
       final remoteNotesResponse = await client
           .from('notes')
           .select()
           .eq('user_id', user.id);
 
-      for (final json in remoteNotesResponse) {
-        final remoteNote = Note.fromSupabaseJson(json);
-        final localNote = await _dbService.getNoteById(remoteNote.id);
-
-        if (localNote == null || remoteNote.updatedAt.isAfter(localNote.updatedAt)) {
-          await _dbService.upsertNote(remoteNote);
-          await _vaultService.saveNote(remoteNote);
-        }
-      }
-
-      // Pull folders
       final remoteFoldersResponse = await client
           .from('folders')
           .select()
           .eq('user_id', user.id);
 
-      for (final json in remoteFoldersResponse) {
-        final remoteFolder = Folder.fromSupabaseJson(json);
+      final remoteNotesList = remoteNotesResponse as List;
+      final hasRemoteNotes = remoteNotesList.isNotEmpty;
+
+      // 3. Process un-synced local notes:
+      // - If cloud already has notes, clean up un-synced default sample welcome notes
+      // - Push any other local un-synced notes to Supabase so they are never lost
+      final localNotes = await _dbService.getNotes(isDeleted: null);
+      for (final lNote in localNotes) {
+        if (lNote.syncedAt == null) {
+          final isSampleWelcomeNote = lNote.title == 'Benvenuto in OpenNotes' ||
+              lNote.title == 'Pianificazione & Attività';
+
+          if (hasRemoteNotes && isSampleWelcomeNote) {
+            await _dbService.permanentlyDeleteNote(lNote.id);
+            if (lNote.filePath != null) {
+              await _vaultService.deleteNoteFile(lNote.filePath!);
+            }
+          } else {
+            // Push to cloud
+            final payload = lNote.toSupabaseJson(user.id);
+            await client.from('notes').upsert(payload);
+            await _dbService.upsertNote(lNote.copyWith(syncedAt: DateTime.now()));
+          }
+        }
+      }
+
+      // 4. Pull remote notes into local SQLite & Markdown Vault
+      for (final json in remoteNotesList) {
+        final remoteNote = Note.fromSupabaseJson(json as Map<String, dynamic>);
+        final localNote = await _dbService.getNoteById(remoteNote.id);
+
+        if (localNote == null || !localNote.updatedAt.isAfter(remoteNote.updatedAt)) {
+          await _dbService.upsertNote(remoteNote);
+          await _vaultService.saveNote(remoteNote);
+        }
+      }
+
+      // 5. Pull remote folders into local SQLite
+      for (final json in (remoteFoldersResponse as List)) {
+        final remoteFolder = Folder.fromSupabaseJson(json as Map<String, dynamic>);
         await _dbService.upsertFolder(remoteFolder);
       }
 
@@ -268,6 +377,7 @@ class SyncService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _authSubscription?.cancel();
     _realtimeChannel?.unsubscribe();
     super.dispose();
   }
