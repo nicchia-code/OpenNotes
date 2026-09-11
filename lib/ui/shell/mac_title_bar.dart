@@ -75,44 +75,50 @@ class MacTitleBar extends StatelessWidget {
           return Row(
             children: [
               // 1. macOS Traffic Lights (Close, Minimize, Maximize)
-              Row(
-                children: [
-                  _buildTrafficLight(
-                    color: AppleTheme.trafficRed,
-                    tooltip: 'Chiudi',
-                    onTap: () async {
-                      if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
-                        await windowManager.close();
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  _buildTrafficLight(
-                    color: AppleTheme.trafficYellow,
-                    tooltip: 'Riduci a icona',
-                    onTap: () async {
-                      if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
-                        await windowManager.minimize();
-                      }
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  _buildTrafficLight(
-                    color: AppleTheme.trafficGreen,
-                    tooltip: 'Ingrandisci',
-                    onTap: () async {
-                      if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
-                        if (await windowManager.isMaximized()) {
-                          await windowManager.unmaximize();
-                        } else {
-                          await windowManager.maximize();
+              // On macOS, native traffic lights are rendered directly by the OS in the frameless window.
+              // We reserve space for them so they do not overlap custom controls.
+              if (!kIsWeb && Platform.isMacOS)
+                const SizedBox(width: 68)
+              else ...[
+                Row(
+                  children: [
+                    _buildTrafficLight(
+                      color: AppleTheme.trafficRed,
+                      tooltip: 'Chiudi',
+                      onTap: () async {
+                        if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+                          await windowManager.close();
                         }
-                      }
-                    },
-                  ),
-                ],
-              ),
-              const SizedBox(width: 16),
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    _buildTrafficLight(
+                      color: AppleTheme.trafficYellow,
+                      tooltip: 'Riduci a icona',
+                      onTap: () async {
+                        if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+                          await windowManager.minimize();
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    _buildTrafficLight(
+                      color: AppleTheme.trafficGreen,
+                      tooltip: 'Ingrandisci',
+                      onTap: () async {
+                        if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+                          if (await windowManager.isMaximized()) {
+                            await windowManager.unmaximize();
+                          } else {
+                            await windowManager.maximize();
+                          }
+                        }
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 16),
+              ],
 
               // Sidebar Toggle Button
               _MacIconButton(
