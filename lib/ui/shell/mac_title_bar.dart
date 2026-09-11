@@ -484,7 +484,9 @@ class MacTitleBar extends StatelessWidget {
 
   String _getFolderTitle(NotesProvider provider) {
     if (provider.isTrashSelected) return 'Eliminati di recente';
-    if (provider.selectedTag != null) return '#${provider.selectedTag}';
+    if (provider.selectedTags.isNotEmpty) {
+      return provider.selectedTags.map((t) => '#$t').join(' ');
+    }
     final folder = provider.folders.cast<dynamic>().firstWhere(
           (f) => f.id == provider.selectedFolderId,
           orElse: () => null,

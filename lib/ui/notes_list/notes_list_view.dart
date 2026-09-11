@@ -92,7 +92,7 @@ class _NotesListViewState extends State<NotesListView> {
             ),
 
           // Active Tag Filter Banner
-          if (notesProvider.selectedTag != null && notesProvider.selectedTag!.isNotEmpty)
+          if (notesProvider.selectedTags.isNotEmpty)
             Container(
               margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -114,7 +114,7 @@ class _NotesListViewState extends State<NotesListView> {
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      'Tag: #${notesProvider.selectedTag}',
+                      'Tag: ${notesProvider.selectedTags.map((t) => '#$t').join(' ')}',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
@@ -150,8 +150,8 @@ class _NotesListViewState extends State<NotesListView> {
                         ),
                         const SizedBox(height: 8),
                         Text(
-                          notesProvider.selectedTag != null
-                              ? 'Nessuna nota con #${notesProvider.selectedTag}'
+                          notesProvider.selectedTags.isNotEmpty
+                              ? 'Nessuna nota con ${notesProvider.selectedTags.map((t) => '#$t').join(', ')}'
                               : (notesProvider.searchQuery.isNotEmpty
                                   ? 'Nessun risultato trovato'
                                   : (notesProvider.isTrashSelected ? 'Cestino vuoto' : 'Nessuna nota')),
@@ -161,7 +161,7 @@ class _NotesListViewState extends State<NotesListView> {
                             fontWeight: FontWeight.w500,
                           ),
                         ),
-                        if (notesProvider.selectedTag != null) ...[
+                        if (notesProvider.selectedTags.isNotEmpty) ...[
                           const SizedBox(height: 8),
                           CupertinoButton(
                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),

@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/folder_model.dart';
 import '../../core/models/tag_model.dart';
@@ -18,7 +19,7 @@ class SidebarView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedFolderId = context.select<NotesProvider, String>((p) => p.selectedFolderId);
-    final selectedTag = context.select<NotesProvider, String?>((p) => p.selectedTag);
+    final selectedTags = context.select<NotesProvider, Set<String>>((p) => p.selectedTags);
     final isTrashSelected = context.select<NotesProvider, bool>((p) => p.isTrashSelected);
     final folders = context.select<NotesProvider, List<Folder>>((p) => p.folders);
     final tags = context.select<NotesProvider, List<Tag>>((p) => p.tags);
@@ -39,39 +40,45 @@ class SidebarView extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // Cloud / Account Header
+          // Header: OpenNotes branding and settings
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
             child: Row(
               children: [
-                const Icon(CupertinoIcons.cloud, color: AppleTheme.accentYellow, size: 18),
-                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    sync.isAuthenticated ? (sync.currentUser?.email ?? 'Cloud') : 'Cloud',
+                    'OpenNotes',
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 14,
                       fontWeight: FontWeight.w700,
+                      letterSpacing: -0.2,
                       color: isDark ? AppleTheme.darkTextPrimary : AppleTheme.lightTextPrimary,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                CupertinoButton(
-                  padding: EdgeInsets.zero,
-                  minSize: 24,
-                  child: Icon(
-                    CupertinoIcons.gear,
-                    size: 16,
-                    color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                if (sync.isSyncing) ...[
+                  const CupertinoActivityIndicator(radius: 6),
+                  const SizedBox(width: 6),
+                ],
+                Tooltip(
+                  message: sync.isAuthenticated
+                      ? 'Impostazioni (${sync.currentUser?.email})'
+                      : 'Impostazioni',
+                  child: CupertinoButton(
+                    padding: EdgeInsets.zero,
+                    minSize: 24,
+                    child: Icon(
+                      CupertinoIcons.gear,
+                      size: 16,
+                      color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                    ),
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (_) => const SupabaseSettingsDialog(),
+                      );
+                    },
                   ),
-                  onPressed: () {
-                    showDialog(
-                      context: context,
-                      builder: (_) => const SupabaseSettingsDialog(),
-                    );
-                  },
                 ),
               ],
             ),
@@ -88,7 +95,7 @@ class SidebarView extends StatelessWidget {
                 _MacSidebarRow(
                   icon: CupertinoIcons.tray_fill,
                   title: 'Tutte le note',
-                  isSelected: selectedFolderId == Folder.allNotesId && selectedTag == null,
+                  isSelected: selectedFolderId == Folder.allNotesId && selectedTags.isEmpty,
                   onTap: () {
                     context.read<NotesProvider>().selectFolder(Folder.allNotesId);
                     onFolderSelected?.call();
@@ -99,7 +106,7 @@ class SidebarView extends StatelessWidget {
                 _MacSidebarRow(
                   icon: CupertinoIcons.folder_fill,
                   title: 'Note',
-                  isSelected: selectedFolderId == Folder.defaultNotesId && selectedTag == null,
+                  isSelected: selectedFolderId == Folder.defaultNotesId && selectedTags.isEmpty,
                   onTap: () {
                     context.read<NotesProvider>().selectFolder(Folder.defaultNotesId);
                     onFolderSelected?.call();
@@ -111,7 +118,7 @@ class SidebarView extends StatelessWidget {
                   return _MacSidebarRow(
                     icon: CupertinoIcons.folder_fill,
                     title: folder.name,
-                    isSelected: selectedFolderId == folder.id && selectedTag == null,
+                    isSelected: selectedFolderId == folder.id && selectedTags.isEmpty,
                     trailing: CupertinoButton(
                       padding: EdgeInsets.zero,
                       minSize: 20,
@@ -130,14 +137,16 @@ class SidebarView extends StatelessWidget {
                   const SizedBox(height: 14),
                   _buildSectionHeader('TAG', isDark),
                   ...tags.map((tag) {
-                    final isSelected = selectedTag == tag.name;
+                    final isSelected = selectedTags.contains(tag.name);
                     return _MacSidebarRow(
                       icon: CupertinoIcons.number,
                       title: tag.name,
                       badge: '${tag.count}',
                       isSelected: isSelected,
                       onTap: () {
-                        context.read<NotesProvider>().selectTag(tag.name);
+                        final isMulti = HardwareKeyboard.instance.isMetaPressed ||
+                            HardwareKeyboard.instance.isControlPressed;
+                        context.read<NotesProvider>().selectTag(tag.name, multiSelect: isMulti);
                         onFolderSelected?.call();
                       },
                     );

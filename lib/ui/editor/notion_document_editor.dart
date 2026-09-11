@@ -18,21 +18,7 @@ import '../security/lock_note_dialog.dart';
 import '../theme/apple_theme.dart';
 import 'rich_text_editing_controller.dart';
 
-enum BlockType {
-  title,
-  h1,
-  h2,
-  h3,
-  paragraph,
-  code,
-  bullet,
-  numbered,
-  checklist,
-  quote,
-  divider,
-  table,
-  image,
-}
+export '../../core/models/note_model.dart' show BlockType;
 
 class NoteBlock {
   final String id;
@@ -44,6 +30,7 @@ class NoteBlock {
   List<List<String>> tableData;
   RichTextEditingController? controller;
   FocusNode? focusNode;
+  Map<int, BlockType> lineStyles;
 
   NoteBlock({
     required this.id,
@@ -53,20 +40,45 @@ class NoteBlock {
     List<StyleSpan>? spans,
     List<List<String>>? tableData,
     GlobalKey? widgetKey,
+    Map<int, BlockType>? lineStyles,
   })  : widgetKey = widgetKey ?? GlobalKey(),
         spans = spans ?? [],
-        tableData = tableData ?? [];
+        tableData = tableData ?? [],
+        lineStyles = lineStyles ?? {};
 
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'type': type.name,
-        'text': controller != null ? controller!.text : text,
-        'isChecked': isChecked,
-        'spans': (controller != null ? controller!.spans : spans).map((s) => s.toJson()).toList(),
-        if (tableData.isNotEmpty) 'tableData': tableData,
-      };
+  Map<String, dynamic> toJson() {
+    final effectiveText = controller != null ? controller!.text : text;
+    final effectiveSpans = controller != null ? controller!.spans : spans;
+    final effectiveLineStyles = controller != null ? controller!.lineStyles : lineStyles;
+
+    return {
+      'id': id,
+      'type': type.name,
+      'text': effectiveText,
+      'isChecked': isChecked,
+      'spans': effectiveSpans.map((s) => s.toJson()).toList(),
+      if (effectiveLineStyles.isNotEmpty)
+        'lineStyles': effectiveLineStyles.map((k, v) => MapEntry(k.toString(), v.name)),
+      if (tableData.isNotEmpty) 'tableData': tableData,
+    };
+  }
 
   factory NoteBlock.fromJson(Map<String, dynamic> json) {
+    final Map<int, BlockType> parsedLineStyles = {};
+    if (json['lineStyles'] is Map) {
+      final rawMap = json['lineStyles'] as Map<String, dynamic>;
+      for (final entry in rawMap.entries) {
+        final lineIdx = int.tryParse(entry.key);
+        if (lineIdx != null) {
+          final blockType = BlockType.values.firstWhere(
+            (t) => t.name == entry.value,
+            orElse: () => BlockType.paragraph,
+          );
+          parsedLineStyles[lineIdx] = blockType;
+        }
+      }
+    }
+
     return NoteBlock(
       id: json['id'] as String? ?? const Uuid().v4(),
       type: BlockType.values.firstWhere(
@@ -83,6 +95,7 @@ class NoteBlock {
               ?.map((r) => (r as List<dynamic>).map((c) => c.toString()).toList())
               .toList() ??
           [],
+      lineStyles: parsedLineStyles,
     );
   }
 }
@@ -206,6 +219,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         final mergedBlocks = <NoteBlock>[];
         String currentText = '';
         final currentSpans = <StyleSpan>[];
+        final currentLineStyles = <int, BlockType>{};
+        int currentLineIdx = 0;
         String? currentId;
 
         void flushText() {
@@ -216,10 +231,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 type: BlockType.paragraph,
                 text: currentText,
                 spans: List.from(currentSpans),
+                lineStyles: Map.from(currentLineStyles),
               ),
             );
             currentText = '';
             currentSpans.clear();
+            currentLineStyles.clear();
+            currentLineIdx = 0;
             currentId = null;
           }
         }
@@ -230,58 +248,84 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
             mergedBlocks.add(b);
           } else {
             currentId ??= b.id;
-            String linePrefix = '';
-            switch (b.type) {
-              case BlockType.title:
-                linePrefix = '';
-                break;
-              case BlockType.h1:
-                linePrefix = '# ';
-                break;
-              case BlockType.h2:
-                linePrefix = '## ';
-                break;
-              case BlockType.h3:
-                linePrefix = '### ';
-                break;
-              case BlockType.bullet:
+
+            final rawLinesInBlock = b.text.split('\n');
+            final startTextOffset = currentText.isEmpty ? 0 : currentText.length + 1;
+
+            for (int li = 0; li < rawLinesInBlock.length; li++) {
+              var line = rawLinesInBlock[li];
+              final lineTrimmed = line.trim();
+              BlockType detectedStyle = BlockType.paragraph;
+
+              if (b.lineStyles.containsKey(li)) {
+                detectedStyle = b.lineStyles[li]!;
+              } else if (li == 0) {
+                detectedStyle = b.type;
+              }
+
+              // Strip any leftover markdown prefixes from previous versions
+              if (lineTrimmed.startsWith('### ')) {
+                detectedStyle = BlockType.h3;
+                line = line.replaceFirst('### ', '');
+              } else if (lineTrimmed.startsWith('## ')) {
+                detectedStyle = BlockType.h2;
+                line = line.replaceFirst('## ', '');
+              } else if (lineTrimmed.startsWith('# ')) {
+                detectedStyle = currentLineIdx == 0 ? BlockType.title : BlockType.h1;
+                line = line.replaceFirst('# ', '');
+              }
+
+              String linePrefix = '';
+              if (detectedStyle == BlockType.bullet) {
                 linePrefix = '• ';
-                break;
-              case BlockType.numbered:
+                detectedStyle = BlockType.paragraph;
+              } else if (detectedStyle == BlockType.numbered) {
                 linePrefix = '1. ';
-                break;
-              case BlockType.checklist:
+                detectedStyle = BlockType.paragraph;
+              } else if (detectedStyle == BlockType.checklist) {
                 linePrefix = b.isChecked ? '● ' : '○ ';
-                break;
-              case BlockType.quote:
+                detectedStyle = BlockType.paragraph;
+              } else if (detectedStyle == BlockType.quote) {
                 linePrefix = '> ';
-                break;
-              case BlockType.code:
+                detectedStyle = BlockType.paragraph;
+              } else if (detectedStyle == BlockType.code) {
                 linePrefix = '``` ';
-                break;
-              default:
-                linePrefix = '';
+                detectedStyle = BlockType.paragraph;
+              } else if (lineTrimmed.startsWith('- [ ]') || lineTrimmed.startsWith('[ ]')) {
+                linePrefix = '○ ';
+                line = lineTrimmed.replaceFirst(RegExp(r'^(?:-\s*)?\[\s*\]\s*'), '');
+              } else if (lineTrimmed.startsWith('- [x]') ||
+                  lineTrimmed.startsWith('- [X]') ||
+                  lineTrimmed.startsWith('[x]') ||
+                  lineTrimmed.startsWith('[X]')) {
+                linePrefix = '● ';
+                line = lineTrimmed.replaceFirst(RegExp(r'^(?:-\s*)?\[[xX]\]\s*'), '');
+              } else if (lineTrimmed.startsWith('- ') || lineTrimmed.startsWith('* ')) {
+                linePrefix = '• ';
+                line = lineTrimmed.substring(2);
+              }
+
+              final finalLine = '$linePrefix$line';
+              currentLineStyles[currentLineIdx] = detectedStyle;
+              if (currentText.isEmpty) {
+                currentText = finalLine;
+              } else {
+                currentText = '$currentText\n$finalLine';
+              }
+              currentLineIdx++;
             }
 
-            final cleanBlockText = b.text.replaceFirst(RegExp(r'^(\s*(?:[-*•]\s*)?)(?:\[[ xX]\]|[○●])\s*'), '');
-            final lineText = '$linePrefix$cleanBlockText';
-            final offset = currentText.isEmpty ? 0 : currentText.length + 1;
             for (final s in b.spans) {
               currentSpans.add(
                 StyleSpan(
-                  start: s.start + offset + linePrefix.length,
-                  end: s.end + offset + linePrefix.length,
+                  start: s.start + startTextOffset,
+                  end: s.end + startTextOffset,
                   isBold: s.isBold,
                   isItalic: s.isItalic,
                   isUnderline: s.isUnderline,
                   isStrikethrough: s.isStrikethrough,
                 ),
               );
-            }
-            if (currentText.isEmpty) {
-              currentText = lineText;
-            } else {
-              currentText = '$currentText\n$lineText';
             }
           }
         }
@@ -298,6 +342,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final rawLines = rawContent.split('\n');
     final mergedBlocks = <NoteBlock>[];
     final currentTextLines = <String>[];
+    final fallbackLineStyles = <int, BlockType>{};
+    int currentLineIdx = 0;
 
     void flushLines() {
       if (currentTextLines.isNotEmpty || mergedBlocks.isEmpty) {
@@ -306,9 +352,12 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
             id: _uuid.v4(),
             type: BlockType.paragraph,
             text: currentTextLines.join('\n'),
+            lineStyles: Map.from(fallbackLineStyles),
           ),
         );
         currentTextLines.clear();
+        fallbackLineStyles.clear();
+        currentLineIdx = 0;
       }
     }
 
@@ -360,20 +409,58 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         continue;
       }
 
-      if (lineTrimmed.startsWith('- [ ]') || lineTrimmed.startsWith('[ ]') || lineTrimmed.startsWith('○ ')) {
+      if (lineTrimmed.startsWith('### ')) {
+        final itemText = lineTrimmed.substring(4).trim();
+        fallbackLineStyles[currentLineIdx] = BlockType.h3;
+        currentTextLines.add(itemText);
+        currentLineIdx++;
+      } else if (lineTrimmed.startsWith('## ')) {
+        final itemText = lineTrimmed.substring(3).trim();
+        fallbackLineStyles[currentLineIdx] = BlockType.h2;
+        currentTextLines.add(itemText);
+        currentLineIdx++;
+      } else if (lineTrimmed.startsWith('# ')) {
+        final itemText = lineTrimmed.substring(2).trim();
+        fallbackLineStyles[currentLineIdx] = currentLineIdx == 0 ? BlockType.title : BlockType.h1;
+        currentTextLines.add(itemText);
+        currentLineIdx++;
+      } else if (lineTrimmed.startsWith('- [ ]') || lineTrimmed.startsWith('[ ]') || lineTrimmed.startsWith('○ ')) {
         final itemText = lineTrimmed.replaceFirst(RegExp(r'^(-\s*)?(\[\s*\]|○)\s*'), '');
+        fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
         currentTextLines.add('○ $itemText');
+        currentLineIdx++;
       } else if (lineTrimmed.startsWith('- [x]') ||
           lineTrimmed.startsWith('- [X]') ||
           lineTrimmed.startsWith('[x]') ||
           lineTrimmed.startsWith('[X]') ||
           lineTrimmed.startsWith('● ')) {
         final itemText = lineTrimmed.replaceFirst(RegExp(r'^(-\s*)?(\[[xX]\]|●)\s*'), '');
+        fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
         currentTextLines.add('● $itemText');
+        currentLineIdx++;
       } else if (lineTrimmed.startsWith('- ') || lineTrimmed.startsWith('* ')) {
-        currentTextLines.add('• ${lineTrimmed.substring(2)}');
+        final indent = line.substring(0, line.length - lineTrimmed.length);
+        final bulletGlyph = RichTextEditingController.getBulletForIndent(indent.length);
+        fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
+        currentTextLines.add('$indent$bulletGlyph ${lineTrimmed.substring(2)}');
+        currentLineIdx++;
+      } else if (lineTrimmed.startsWith('• ') || lineTrimmed.startsWith('◦ ') || lineTrimmed.startsWith('▪ ')) {
+        final indent = line.substring(0, line.length - lineTrimmed.length);
+        final bulletGlyph = RichTextEditingController.getBulletForIndent(indent.length);
+        fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
+        currentTextLines.add('$indent$bulletGlyph ${lineTrimmed.substring(2)}');
+        currentLineIdx++;
       } else {
+        final isOnlyTags = Note.isOnlyTags(lineTrimmed);
+        if (currentLineIdx == 0 && !lineTrimmed.startsWith('|') && !isOnlyTags) {
+          fallbackLineStyles[0] = BlockType.title;
+        } else if (currentLineIdx == 1 && fallbackLineStyles[0] == BlockType.paragraph && rawLines.isNotEmpty && Note.isOnlyTags(rawLines[0])) {
+          fallbackLineStyles[1] = BlockType.title;
+        } else {
+          fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
+        }
         currentTextLines.add(line);
+        currentLineIdx++;
       }
       i++;
     }
@@ -404,6 +491,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       if (b.controller != null) {
         b.text = b.controller!.text;
         b.spans = List.from(b.controller!.spans);
+        b.lineStyles = Map.from(b.controller!.lineStyles);
       }
     }
     final blockList = _blocks.map((b) => b.toJson()).toList();
@@ -475,45 +563,66 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final block = _currentActiveBlock;
     if (block == null) return;
 
-    String prefix = '';
-    switch (newType) {
-      case BlockType.title:
-        prefix = '';
-        break;
-      case BlockType.h1:
-        prefix = '# ';
-        break;
-      case BlockType.h2:
-        prefix = '## ';
-        break;
-      case BlockType.h3:
-        prefix = '### ';
-        break;
-      case BlockType.bullet:
-        prefix = '• ';
-        break;
-      case BlockType.checklist:
-        prefix = '○ ';
-        break;
-      case BlockType.numbered:
-        prefix = '1. ';
-        break;
-      case BlockType.quote:
-        prefix = '> ';
-        break;
-      case BlockType.code:
-        prefix = '``` ';
-        break;
-      case BlockType.paragraph:
-      default:
-        prefix = '';
-        break;
+    final ctrl = block.controller;
+    if (ctrl != null) {
+      final sel = ctrl.selection;
+      final startOffset = sel.isValid ? sel.start : ctrl.text.length;
+      final endOffset = sel.isValid ? sel.end : startOffset;
+      final startLine = ctrl.getLineIndexAtOffset(startOffset);
+      final endLine = ctrl.getLineIndexAtOffset(endOffset);
+
+      // 1. Remove existing heading / markdown / list prefixes from target lines
+      ctrl.removeLinePrefixes(startLine, endLine);
+
+      // 2. Apply line style
+      if (newType == BlockType.title ||
+          newType == BlockType.h1 ||
+          newType == BlockType.h2 ||
+          newType == BlockType.h3 ||
+          newType == BlockType.paragraph) {
+        for (int l = startLine; l <= endLine; l++) {
+          ctrl.setLineStyle(l, newType);
+        }
+      } else {
+        for (int l = startLine; l <= endLine; l++) {
+          ctrl.setLineStyle(l, BlockType.paragraph);
+        }
+        String prefix = '';
+        switch (newType) {
+          case BlockType.bullet:
+            prefix = '• ';
+            break;
+          case BlockType.checklist:
+            prefix = '○ ';
+            break;
+          case BlockType.numbered:
+            prefix = '1. ';
+            break;
+          case BlockType.quote:
+            prefix = '> ';
+            break;
+          case BlockType.code:
+            prefix = '``` ';
+            break;
+          default:
+            prefix = '';
+            break;
+        }
+        if (prefix.isNotEmpty) {
+          ctrl.applyLinePrefix(prefix);
+        }
+      }
+
+      _serializeAndSave(immediate: true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          block.focusNode?.requestFocus();
+        }
+      });
+      return;
     }
 
-    if (block.type != BlockType.paragraph) {
-      block.type = newType;
-    }
-    block.controller?.applyLinePrefix(prefix);
+    block.type = newType;
     _serializeAndSave(immediate: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -556,13 +665,50 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   void insertHeading() {
     final block = _currentActiveBlock;
     if (block != null && block.controller != null) {
-      block.controller!.applyLinePrefix('## ');
-      _serializeAndSave(immediate: true);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          block.focusNode?.requestFocus();
-        }
-      });
+      final ctrl = block.controller!;
+      final sel = ctrl.selection;
+      final offset = sel.isValid ? sel.start : ctrl.text.length;
+      final lineIdx = ctrl.getLineIndexAtOffset(offset);
+      final currentStyle = ctrl.getLineStyle(lineIdx);
+
+      BlockType nextType;
+      switch (currentStyle) {
+        case BlockType.title:
+          nextType = BlockType.h1;
+          break;
+        case BlockType.h1:
+          nextType = BlockType.h2;
+          break;
+        case BlockType.h2:
+          nextType = BlockType.h3;
+          break;
+        case BlockType.h3:
+          nextType = BlockType.paragraph;
+          break;
+        case BlockType.paragraph:
+        default:
+          nextType = BlockType.h1;
+          break;
+      }
+      setBlockType(nextType);
+    }
+  }
+
+  /// Indents current line / selection (like pressing Tab on bullet/checklist)
+  void indent() {
+    final block = _currentActiveBlock;
+    if (block?.controller != null) {
+      block!.controller!.handleTabKey(outdent: false);
+      _serializeAndSave(immediate: false);
+    }
+  }
+
+  /// Outdents current line / selection (like pressing Shift+Tab on bullet/checklist)
+  void outdent() {
+    final block = _currentActiveBlock;
+    if (block?.controller != null) {
+      block!.controller!.handleTabKey(outdent: true);
+      _serializeAndSave(immediate: false);
     }
   }
 
@@ -813,13 +959,29 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     }
 
     if (block.controller == null) {
+      final initialLineStyles = Map<int, BlockType>.from(block.lineStyles);
+      if (initialLineStyles.isEmpty &&
+          (block.type == BlockType.title ||
+              block.type == BlockType.h1 ||
+              block.type == BlockType.h2 ||
+              block.type == BlockType.h3)) {
+        initialLineStyles[0] = block.type;
+      }
       block.controller = RichTextEditingController(
         text: block.text,
         baseStyle: baseStyle,
         spans: List.from(block.spans),
+        lineStyles: initialLineStyles,
       );
     } else {
       block.controller!.baseStyle = baseStyle;
+      if (block.controller!.lineStyles.isEmpty &&
+          (block.type == BlockType.title ||
+              block.type == BlockType.h1 ||
+              block.type == BlockType.h2 ||
+              block.type == BlockType.h3)) {
+        block.controller!.lineStyles[0] = block.type;
+      }
     }
 
     final Widget inputWidget = TextField(
@@ -1503,6 +1665,29 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   }
 
   void _transformBlock(NoteBlock block, BlockType newType, String cleanText, {bool isChecked = false}) {
+    final ctrl = block.controller;
+    if (ctrl != null) {
+      final text = ctrl.text;
+      final sel = ctrl.selection;
+      final pos = sel.isValid ? sel.start : text.length;
+      final lineIdx = ctrl.getLineIndexAtOffset(pos);
+
+      final lines = text.split('\n');
+      if (lineIdx < lines.length) {
+        var lStr = lines[lineIdx];
+        if (lStr.startsWith('/')) {
+          lStr = lStr.replaceFirst(RegExp(r'^/[a-zA-Z0-9]*\s*'), '');
+        }
+        lines[lineIdx] = lStr;
+        ctrl.text = lines.join('\n');
+      }
+      setState(() {
+        _slashMenuBlockIndex = null;
+      });
+      setBlockType(newType);
+      return;
+    }
+
     final isDark = Theme.of(context).brightness == Brightness.dark;
     setState(() {
       block.type = newType;
@@ -1510,6 +1695,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       block.text = cleanText;
       block.controller?.text = cleanText;
       block.controller?.baseStyle = _getBaseStyleForBlock(block, isDark);
+      if (newType == BlockType.title ||
+          newType == BlockType.h1 ||
+          newType == BlockType.h2 ||
+          newType == BlockType.h3) {
+        block.lineStyles[0] = newType;
+        block.controller?.lineStyles[0] = newType;
+      }
       block.controller?.selection = TextSelection.collapsed(offset: cleanText.length);
       _slashMenuBlockIndex = null;
     });
@@ -1523,7 +1715,12 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   }
 
   KeyEventResult _handleKeyEvent(KeyEvent event, int index, NoteBlock block) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent) {
+      if (event.logicalKey == LogicalKeyboardKey.tab) {
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
 
     // Tag autocomplete keyboard navigation & confirmation
     if (_tagAutocompleteBlockIndex == index && _tagAutocompleteQuery != null) {
@@ -1580,6 +1777,15 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final ctrl = block.controller;
     final sel = ctrl?.selection ?? const TextSelection.collapsed(offset: -1);
 
+    // TAB and SHIFT+TAB keys (Notion-style indent / outdent)
+    if (event.logicalKey == LogicalKeyboardKey.tab) {
+      final isShift = HardwareKeyboard.instance.isShiftPressed;
+      if (block.controller != null && block.controller!.handleTabKey(outdent: isShift)) {
+        _serializeAndSave(immediate: false);
+        return KeyEventResult.handled;
+      }
+    }
+
     // ENTER key
     if (event.logicalKey == LogicalKeyboardKey.enter && !HardwareKeyboard.instance.isShiftPressed) {
       if (block.controller != null && block.controller!.handleEnterKey()) {
@@ -1590,22 +1796,34 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
     // BACKSPACE key
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
+      if (block.controller != null && block.controller!.handleBackspaceKey()) {
+        _serializeAndSave(immediate: false);
+        return KeyEventResult.handled;
+      }
       if (sel.isCollapsed && sel.start == 0) {
+        final currentText = block.controller?.text ?? block.text;
         if (block.type != BlockType.paragraph && block.type != BlockType.title) {
-          final isDark = Theme.of(context).brightness == Brightness.dark;
-          setState(() {
-            block.type = BlockType.paragraph;
-            block.controller?.baseStyle = _getBaseStyleForBlock(block, isDark);
-          });
-          _serializeAndSave(immediate: true);
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              block.focusNode?.requestFocus();
-              block.controller?.selection = const TextSelection.collapsed(offset: 0);
-            }
-          });
-          return KeyEventResult.handled;
-        } else if (block.type == BlockType.paragraph && index > 0) {
+          if (currentText.isEmpty) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
+            setState(() {
+              block.type = BlockType.paragraph;
+              block.lineStyles.clear();
+              block.controller?.lineStyles.clear();
+              block.controller?.baseStyle = _getBaseStyleForBlock(block, isDark);
+            });
+            _serializeAndSave(immediate: true);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                block.focusNode?.requestFocus();
+                block.controller?.selection = const TextSelection.collapsed(offset: 0);
+              }
+            });
+            return KeyEventResult.handled;
+          } else if (index > 0) {
+            _mergeBlockWithPrevious(index);
+            return KeyEventResult.handled;
+          }
+        } else if (index > 0) {
           _mergeBlockWithPrevious(index);
           return KeyEventResult.handled;
         }
@@ -1660,11 +1878,54 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
           end: s.end + offset,
         )).toList();
 
+    // Merge line styles with offset
+    final prevLineStyles = Map<int, BlockType>.from(previous.controller?.lineStyles ?? previous.lineStyles);
+    if (prevLineStyles.isEmpty &&
+        (previous.type == BlockType.title ||
+            previous.type == BlockType.h1 ||
+            previous.type == BlockType.h2 ||
+            previous.type == BlockType.h3)) {
+      prevLineStyles[0] = previous.type;
+    }
+
+    final currLineStyles = Map<int, BlockType>.from(current.controller?.lineStyles ?? current.lineStyles);
+    if (currLineStyles.isEmpty &&
+        (current.type == BlockType.title ||
+            current.type == BlockType.h1 ||
+            current.type == BlockType.h2 ||
+            current.type == BlockType.h3)) {
+      currLineStyles[0] = current.type;
+    }
+
+    final prevLineCount = '\n'.allMatches(prevText).length;
+    final mergedLineStyles = Map<int, BlockType>.from(prevLineStyles);
+    for (final entry in currLineStyles.entries) {
+      mergedLineStyles[prevLineCount + entry.key] = entry.value;
+    }
+
+    if (prevText.isEmpty) {
+      previous.type = current.type;
+      previous.isChecked = current.isChecked;
+      mergedLineStyles.clear();
+      mergedLineStyles.addAll(currLineStyles);
+    } else if (previous.type == BlockType.title ||
+        previous.type == BlockType.h1 ||
+        previous.type == BlockType.h2 ||
+        previous.type == BlockType.h3) {
+      previous.type = BlockType.paragraph;
+    }
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final newBaseStyle = _getBaseStyleForBlock(previous, isDark);
+
     previous.text = mergedText;
     previous.spans = [...prevSpans, ...shiftedCurrSpans];
+    previous.lineStyles = mergedLineStyles;
     if (previous.controller != null) {
+      previous.controller!.baseStyle = newBaseStyle;
       previous.controller!.text = mergedText;
       previous.controller!.spans = List.from(previous.spans);
+      previous.controller!.lineStyles = Map.from(mergedLineStyles);
     }
 
     setState(() {

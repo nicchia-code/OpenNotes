@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:open_notes/core/models/note_model.dart';
@@ -423,5 +424,60 @@ Scrivendo un tag qui:
 
     // Verify the floating popup is displayed
     expect(find.text('TAG SUGGERITI'), findsOneWidget);
+  });
+
+  testWidgets('NotionDocumentEditor indents bullet item with Tab to Notion sub-bullet', (tester) async {
+    final note = Note(
+      id: 'test-note-tab',
+      title: 'Nota Tab Test',
+      content: '''# Nota Tab Test
+• Primo elemento
+• Secondo elemento
+''',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    final db = DatabaseService();
+    final vault = VaultService();
+    final sync = SyncService(db, vault);
+    final security = SecurityService();
+    final provider = NotesProvider(dbService: db, vaultService: vault, syncService: sync);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider.value(value: db),
+          Provider.value(value: vault),
+          ChangeNotifierProvider.value(value: sync),
+          ChangeNotifierProvider.value(value: security),
+          ChangeNotifierProvider.value(value: provider),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: NotionDocumentEditor(note: note),
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final docFinder = find.byType(TextField);
+    expect(docFinder, findsOneWidget);
+    await tester.tap(docFinder);
+    await tester.pumpAndSettle();
+
+    final ctrl = tester.widget<TextField>(docFinder).controller as RichTextEditingController;
+    // Set caret on the second bullet item
+    final secondPos = ctrl.text.indexOf('Secondo elemento');
+    ctrl.selection = TextSelection.collapsed(offset: secondPos);
+
+    // Send Tab key event
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pumpAndSettle();
+
+    // Verify it transformed into nested sub-bullet with '◦' and 2 spaces indent
+    expect(ctrl.text.contains('  ◦ Secondo elemento'), isTrue);
   });
 }

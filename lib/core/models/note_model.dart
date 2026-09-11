@@ -2,6 +2,22 @@ import 'dart:convert';
 import 'style_span.dart';
 export 'style_span.dart';
 
+enum BlockType {
+  title,
+  h1,
+  h2,
+  h3,
+  paragraph,
+  code,
+  bullet,
+  numbered,
+  checklist,
+  quote,
+  divider,
+  table,
+  image,
+}
+
 /// Represents a single Note in OpenNotes.
 /// Compatible with Apple Notes data structure and Markdown storage.
 class Note {
@@ -37,6 +53,14 @@ class Note {
     this.cachedSnippet,
   });
 
+  /// Checks if a string contains only hashtags (e.g. "#lavoro #progetto")
+  static bool isOnlyTags(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return false;
+    final tokens = trimmed.split(RegExp(r'\s+'));
+    return tokens.every((token) => RegExp(r'^#([a-zA-Z0-9_\-]+)$').hasMatch(token));
+  }
+
   /// Derives title and preview snippet from content (supports JSON blocks or text).
   static String extractTitle(String rawContent, [String defaultTitle = 'Nuova nota']) {
     final trimmed = rawContent.trim();
@@ -47,6 +71,7 @@ class Note {
           if (item is Map<String, dynamic>) {
             final type = item['type'] as String?;
             final text = (item['text'] as String?)?.trim() ?? '';
+            if (isOnlyTags(text)) continue;
             if (type == 'title' && text.isNotEmpty) {
               final firstLine = text.split('\n').first.trim().replaceFirst(RegExp(r'^#+\s*'), '');
               return firstLine.length > 60 ? firstLine.substring(0, 60).trim() : firstLine;
@@ -65,6 +90,7 @@ class Note {
     for (final line in lines) {
       final t = line.trim();
       if (t.isNotEmpty) {
+        if (isOnlyTags(t)) continue;
         final cleaned = t.replaceFirst(RegExp(r'^#+\s*'), '').trim();
         if (cleaned.isNotEmpty) {
           return cleaned.length > 60 ? cleaned.substring(0, 60).trim() : cleaned;
@@ -91,6 +117,7 @@ class Note {
           if (item is Map<String, dynamic>) {
             final type = item['type'] as String?;
             final text = (item['text'] as String?)?.trim() ?? '';
+            if (isOnlyTags(text)) continue;
             if (!skippedTitle && (type == 'title' || type == 'h1')) {
               skippedTitle = true;
               continue;
@@ -114,13 +141,14 @@ class Note {
     for (final line in lines) {
       final t = line.trim();
       if (t.isEmpty) continue;
+      if (isOnlyTags(t)) continue;
       if (!skippedTitle) {
         skippedTitle = true;
         continue;
       }
       final cleanLine = t
           .replaceAll(RegExp(r'^[#\-*+>\d\.]+\s*'), '')
-          .replaceAll(RegExp(r'^[•○●]\s*'), '')
+          .replaceAll(RegExp(r'^[•○●◦▪]\s*'), '')
           .replaceAll(RegExp(r'\[[ xX]\]'), '')
           .replaceAll('**', '')
           .replaceAll('*', '')
@@ -146,9 +174,9 @@ class Note {
     if (!trimmed.startsWith('[')) {
       // Already plain markdown / text
       return content
-          .replaceAllMapped(RegExp(r'(^|\n)○\s*'), (m) => '${m.group(1)}- [ ] ')
-          .replaceAllMapped(RegExp(r'(^|\n)●\s*'), (m) => '${m.group(1)}- [x] ')
-          .replaceAllMapped(RegExp(r'(^|\n)•\s*'), (m) => '${m.group(1)}- ');
+          .replaceAllMapped(RegExp(r'(^|\n)(\s*)○\s*'), (m) => '${m.group(1)}${m.group(2)}- [ ] ')
+          .replaceAllMapped(RegExp(r'(^|\n)(\s*)●\s*'), (m) => '${m.group(1)}${m.group(2)}- [x] ')
+          .replaceAllMapped(RegExp(r'(^|\n)(\s*)[•◦▪]\s*'), (m) => '${m.group(1)}${m.group(2)}- ');
     }
 
     try {
@@ -255,10 +283,39 @@ class Note {
             }
             break;
           default:
-            final paraFormatted = blockFormatted
-                .replaceAllMapped(RegExp(r'(^|\n)○\s*'), (m) => '${m.group(1)}- [ ] ')
-                .replaceAllMapped(RegExp(r'(^|\n)●\s*'), (m) => '${m.group(1)}- [x] ')
-                .replaceAllMapped(RegExp(r'(^|\n)•\s*'), (m) => '${m.group(1)}- ');
+            final Map<int, String> parsedLineStyles = {};
+            if (item['lineStyles'] is Map) {
+              final rawMap = item['lineStyles'] as Map<String, dynamic>;
+              for (final entry in rawMap.entries) {
+                final lineIdx = int.tryParse(entry.key);
+                if (lineIdx != null) {
+                  parsedLineStyles[lineIdx] = entry.value.toString();
+                }
+              }
+            }
+
+            final rawLines = blockFormatted.split('\n');
+            final formattedLines = <String>[];
+            for (int li = 0; li < rawLines.length; li++) {
+              final line = rawLines[li];
+              final style = parsedLineStyles[li];
+              if (style == 'title' && !line.startsWith('#')) {
+                formattedLines.add(line.isEmpty ? '' : '# $line');
+              } else if (style == 'h1' && !line.startsWith('#')) {
+                formattedLines.add('# $line');
+              } else if (style == 'h2' && !line.startsWith('#')) {
+                formattedLines.add('## $line');
+              } else if (style == 'h3' && !line.startsWith('#')) {
+                formattedLines.add('### $line');
+              } else {
+                formattedLines.add(line);
+              }
+            }
+            final linesJoined = formattedLines.join('\n');
+            final paraFormatted = linesJoined
+                .replaceAllMapped(RegExp(r'(^|\n)(\s*)○\s*'), (m) => '${m.group(1)}${m.group(2)}- [ ] ')
+                .replaceAllMapped(RegExp(r'(^|\n)(\s*)●\s*'), (m) => '${m.group(1)}${m.group(2)}- [x] ')
+                .replaceAllMapped(RegExp(r'(^|\n)(\s*)[•◦▪]\s*'), (m) => '${m.group(1)}${m.group(2)}- ');
             buffer.writeln(paraFormatted);
             break;
         }

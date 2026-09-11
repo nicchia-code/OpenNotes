@@ -21,15 +21,20 @@ class DatabaseService {
     return _db!;
   }
 
-  Future<void> init() async {
-    // Initialize FFI for desktop (Linux, macOS, Windows)
-    if (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS)) {
+  Future<void> init({bool inMemory = false}) async {
+    // Initialize FFI for desktop (Linux, macOS, Windows) or inMemory test
+    if (inMemory || (!kIsWeb && (Platform.isLinux || Platform.isWindows || Platform.isMacOS))) {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
     }
 
-    final docsDir = await getApplicationDocumentsDirectory();
-    final dbPath = p.join(docsDir.path, 'opennotes.db');
+    final String dbPath;
+    if (inMemory) {
+      dbPath = inMemoryDatabasePath;
+    } else {
+      final docsDir = await getApplicationDocumentsDirectory();
+      dbPath = p.join(docsDir.path, 'opennotes.db');
+    }
 
     _db = await openDatabase(
       dbPath,
@@ -119,6 +124,7 @@ class DatabaseService {
   Future<List<Note>> getNotes({
     String? folderId,
     String? tag,
+    List<String>? tags,
     bool? isDeleted = false,
     String? searchQuery,
   }) async {
@@ -135,8 +141,18 @@ class DatabaseService {
       whereArgs.add(folderId);
     }
 
+    final targetTags = <String>{};
     if (tag != null && tag.isNotEmpty) {
-      final cleanTag = tag.replaceAll('#', '').trim().toLowerCase();
+      targetTags.add(tag.replaceAll('#', '').trim().toLowerCase());
+    }
+    if (tags != null) {
+      for (final t in tags) {
+        final clean = t.replaceAll('#', '').trim().toLowerCase();
+        if (clean.isNotEmpty) targetTags.add(clean);
+      }
+    }
+
+    for (final cleanTag in targetTags) {
       whereClauses.add('(LOWER(tags) LIKE ? OR LOWER(content) LIKE ?)');
       whereArgs.add('%"$cleanTag"%');
       whereArgs.add('%#$cleanTag%');

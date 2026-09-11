@@ -19,11 +19,13 @@ class NotesProvider extends ChangeNotifier {
   List<Note> _notes = [];
   List<Tag> _tags = [];
   String _selectedFolderId = Folder.allNotesId;
-  String? _selectedTag;
+  Set<String> _selectedTags = {};
   String? _selectedNoteId;
   String _searchQuery = '';
   bool _isLoading = false;
   Timer? _debounceSaveTimer;
+  Map<String, int> _folderCounts = {};
+  int _trashCount = 0;
 
   NotesProvider({
     required DatabaseService dbService,
@@ -37,10 +39,15 @@ class NotesProvider extends ChangeNotifier {
   List<Note> get notes => _notes;
   List<Tag> get tags => _tags;
   String get selectedFolderId => _selectedFolderId;
-  String? get selectedTag => _selectedTag;
+  String? get selectedTag => _selectedTags.isNotEmpty ? _selectedTags.first : null;
+  Set<String> get selectedTags => Set.unmodifiable(_selectedTags);
+  bool isTagSelected(String tag) => _selectedTags.contains(tag.replaceAll('#', '').trim().toLowerCase());
   String? get selectedNoteId => _selectedNoteId;
   String get searchQuery => _searchQuery;
   bool get isLoading => _isLoading;
+
+  int getNoteCountForFolder(String folderId) => _folderCounts[folderId] ?? 0;
+  int get trashCount => _trashCount;
 
   Note? get selectedNote {
     if (_selectedNoteId == null) return null;
@@ -75,6 +82,7 @@ class NotesProvider extends ChangeNotifier {
   Future<void> refreshFolders() async {
     _folders = await _dbService.getFolders();
     notifyListeners();
+    refreshCounts();
   }
 
   /// Refreshes tag list from database
@@ -83,17 +91,30 @@ class NotesProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Refreshes folder note counts and trash count
+  Future<void> refreshCounts() async {
+    final counts = <String, int>{};
+    counts[Folder.allNotesId] = await _dbService.getNotesCount(isDeleted: false);
+    counts[Folder.defaultNotesId] = await _dbService.getNotesCount(folderId: Folder.defaultNotesId, isDeleted: false);
+    for (final folder in _folders) {
+      counts[folder.id] = await _dbService.getNotesCount(folderId: folder.id, isDeleted: false);
+    }
+    _folderCounts = counts;
+    _trashCount = await _dbService.getTrashCount();
+    notifyListeners();
+  }
+
   /// Refreshes notes list based on current filters
   Future<void> refreshNotes() async {
     final isDeleted = isTrashSelected;
     // When filtering by tag, search across all folders
-    final folderId = (_selectedTag != null && _selectedTag!.isNotEmpty)
+    final folderId = _selectedTags.isNotEmpty
         ? null
         : (isTrashSelected ? null : (_selectedFolderId.isEmpty ? null : _selectedFolderId));
 
     _notes = await _dbService.getNotes(
       folderId: folderId,
-      tag: _selectedTag,
+      tags: _selectedTags.isNotEmpty ? _selectedTags.toList() : null,
       isDeleted: isDeleted,
       searchQuery: _searchQuery,
     );
@@ -104,24 +125,48 @@ class NotesProvider extends ChangeNotifier {
     }
 
     notifyListeners();
+    refreshCounts();
   }
 
   /// Selects a folder and filters notes
   void selectFolder(String folderId) {
     _selectedFolderId = folderId;
-    _selectedTag = null;
+    _selectedTags.clear();
     refreshNotes();
   }
 
-  /// Selects a tag and filters notes across all folders (toggles off if tapped again)
-  void selectTag(String? tag) {
-    final clean = tag?.replaceAll('#', '').trim().toLowerCase();
-    if (_selectedTag == clean || clean == null || clean.isEmpty) {
-      _selectedTag = null;
+  /// Selects a tag and filters notes across all folders (toggles off if tapped again, or multi-selects)
+  void selectTag(String? tag, {bool multiSelect = false}) {
+    if (tag == null) {
+      _selectedTags.clear();
     } else {
-      _selectedTag = clean;
+      final clean = tag.replaceAll('#', '').trim().toLowerCase();
+      if (clean.isEmpty) {
+        _selectedTags.clear();
+      } else if (multiSelect) {
+        if (_selectedTags.contains(clean)) {
+          _selectedTags.remove(clean);
+        } else {
+          _selectedTags.add(clean);
+        }
+      } else {
+        if (_selectedTags.length == 1 && _selectedTags.contains(clean)) {
+          _selectedTags.clear();
+        } else {
+          _selectedTags = {clean};
+        }
+      }
     }
     _selectedFolderId = Folder.allNotesId;
+    refreshNotes();
+  }
+
+  /// Toggles a tag in the multi-tag selection
+  void toggleTag(String tag) => selectTag(tag, multiSelect: true);
+
+  /// Clears active tag selection
+  void clearSelectedTags() {
+    _selectedTags.clear();
     refreshNotes();
   }
 
@@ -138,6 +183,7 @@ class NotesProvider extends ChangeNotifier {
   }
 
   /// Creates a new Note in the current folder (or default notes folder)
+  /// If creating inside a tag view (or multiple tags), appends those tags at the top of the note.
   Future<Note> createNote({String initialTitle = 'Nuova nota', String initialContent = ''}) async {
     const uuid = Uuid();
     final now = DateTime.now();
@@ -150,14 +196,28 @@ class NotesProvider extends ChangeNotifier {
       targetFolderId = Folder.defaultNotesId;
     }
 
+    String content = initialContent;
+    final noteTags = <String>[];
+
+    if (_selectedTags.isNotEmpty) {
+      final tagsPrefix = _selectedTags.map((t) => '#$t').join(' ');
+      noteTags.addAll(_selectedTags);
+      if (content.trim().isEmpty) {
+        content = '$tagsPrefix\n\n';
+      } else if (!content.contains(tagsPrefix)) {
+        content = '$tagsPrefix\n$content';
+      }
+    }
+
     final newNote = Note(
       id: uuid.v4(),
       title: initialTitle,
-      content: initialContent,
+      content: content,
       folderId: targetFolderId,
+      tags: noteTags,
       createdAt: now,
       updatedAt: now,
-      cachedSnippet: Note.extractSnippet(initialContent),
+      cachedSnippet: Note.extractSnippet(content),
     );
 
     // Save to database
@@ -298,6 +358,14 @@ class NotesProvider extends ChangeNotifier {
     await _dbService.upsertFolder(folder);
     await refreshFolders();
     return folder;
+  }
+
+  /// Renames a folder
+  Future<void> renameFolder(String folderId, String newName) async {
+    final folder = _folders.firstWhere((f) => f.id == folderId);
+    final updated = folder.copyWith(name: newName.trim(), updatedAt: DateTime.now());
+    await _dbService.upsertFolder(updated);
+    await refreshFolders();
   }
 
   /// Deletes a folder

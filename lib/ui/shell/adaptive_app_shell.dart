@@ -11,6 +11,9 @@ import '../../core/services/vault_service.dart';
 import '../../core/state/notes_provider.dart';
 import '../drawing/apple_pencil_canvas.dart';
 import '../editor/notion_document_editor.dart';
+import '../mobile/mobile_folders_screen.dart';
+import '../mobile/mobile_notes_list_screen.dart';
+import '../mobile/mobile_note_editor_screen.dart';
 import '../notes_list/notes_list_view.dart';
 import '../security/lock_note_dialog.dart';
 import '../sidebar/sidebar_view.dart';
@@ -195,8 +198,8 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
                                 CupertinoIcons.doc_text,
                                 size: 56,
                                 color: isDark
-                                    ? AppleTheme.darkTextSecondary.withOpacity(0.4)
-                                    : AppleTheme.lightTextSecondary.withOpacity(0.4),
+                                    ? AppleTheme.darkTextSecondary.withValues(alpha: 0.4)
+                                    : AppleTheme.lightTextSecondary.withValues(alpha: 0.4),
                               ),
                               const SizedBox(height: 12),
                               Text(
@@ -219,58 +222,83 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
     );
   }
 
-  /// Stack Navigation for Mobile screens
+  /// Stack Navigation for Mobile screens with authentic iOS Apple Notes flow
   Widget _buildMobileLayout(BuildContext context) {
     return Navigator(
-      onGenerateRoute: (settings) {
-        return CupertinoPageRoute(
-          builder: (navContext) => CupertinoPageScaffold(
-            navigationBar: const CupertinoNavigationBar(
-              middle: Text('Cartelle', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-            child: SafeArea(
-              child: SidebarView(
-                onFolderSelected: () {
-                  Navigator.of(navContext).push(
+      onGenerateInitialRoutes: (navigator, initialRoute) {
+        return [
+          CupertinoPageRoute(
+            builder: (foldersContext) => MobileFoldersScreen(
+              onOpenNotesList: () {
+                Navigator.of(foldersContext).push(
+                  CupertinoPageRoute(
+                    builder: (listContext) => _buildMobileNotesListScreen(context, listContext),
+                  ),
+                );
+              },
+              onSelectFolder: (folderId) {
+                context.read<NotesProvider>().selectFolder(folderId);
+              },
+              onSelectTag: (tag) {
+                context.read<NotesProvider>().selectTag(tag);
+              },
+              onNewNote: () async {
+                final newNote = await context.read<NotesProvider>().createNote();
+                if (foldersContext.mounted) {
+                  Navigator.of(foldersContext).push(
                     CupertinoPageRoute(
-                      builder: (listContext) => CupertinoPageScaffold(
-                        navigationBar: const CupertinoNavigationBar(
-                          previousPageTitle: 'Cartelle',
-                          middle: Text('Note', style: TextStyle(fontWeight: FontWeight.bold)),
-                        ),
-                        child: SafeArea(
-                          child: NotesListView(
-                            onNoteSelected: (note) {
-                              Navigator.of(listContext).push(
-                                CupertinoPageRoute(
-                                  builder: (editorContext) => CupertinoPageScaffold(
-                                    navigationBar: CupertinoNavigationBar(
-                                      previousPageTitle: 'Note',
-                                      middle: Text(
-                                        note.title.isEmpty ? 'Nuova nota' : note.title,
-                                        style: const TextStyle(fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                    child: SafeArea(
-                                      child: NotionDocumentEditor(
-                                        key: ValueKey(note.id),
-                                        note: note,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
+                      builder: (editorContext) => MobileNoteEditorScreen(
+                        note: newNote,
+                        backFolderTitle: 'Cartelle',
                       ),
                     ),
                   );
-                },
-              ),
+                }
+              },
+            ),
+          ),
+          CupertinoPageRoute(
+            builder: (listContext) => _buildMobileNotesListScreen(context, listContext),
+          ),
+        ];
+      },
+    );
+  }
+
+  Widget _buildMobileNotesListScreen(BuildContext appContext, BuildContext navContext) {
+    final provider = appContext.read<NotesProvider>();
+    return MobileNotesListScreen(
+      onBackToFolders: () {
+        if (Navigator.of(navContext).canPop()) {
+          Navigator.of(navContext).pop();
+        }
+      },
+      onNoteSelected: (note) {
+        Navigator.of(navContext).push(
+          CupertinoPageRoute(
+            builder: (_) => MobileNoteEditorScreen(
+              note: note,
+              backFolderTitle: provider.isTrashSelected
+                  ? 'Cestino'
+                  : (provider.selectedTags.isNotEmpty
+                      ? provider.selectedTags.map((t) => '#$t').join(' ')
+                      : 'Note'),
             ),
           ),
         );
+      },
+      onNewNote: () async {
+        final newNote = await provider.createNote();
+        if (navContext.mounted) {
+          Navigator.of(navContext).push(
+            CupertinoPageRoute(
+              builder: (_) => MobileNoteEditorScreen(
+                note: newNote,
+                backFolderTitle: 'Note',
+              ),
+            ),
+          );
+        }
       },
     );
   }

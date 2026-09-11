@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -285,6 +286,23 @@ void main() {
       editorKey.currentState?.setBlockType(BlockType.h1);
       await tester.pumpAndSettle();
 
+      final tf = tester.widget<TextField>(textFieldFinder);
+      final ctrl = tf.controller as RichTextEditingController;
+      expect(ctrl.text.contains('#'), isFalse);
+      expect(ctrl.getLineStyle(0), BlockType.h1);
+
+      // Change block style to Title
+      editorKey.currentState?.setBlockType(BlockType.title);
+      await tester.pumpAndSettle();
+      expect(ctrl.text.contains('#'), isFalse);
+      expect(ctrl.getLineStyle(0), BlockType.title);
+
+      // Change block style to Paragraph (Corpo)
+      editorKey.currentState?.setBlockType(BlockType.paragraph);
+      await tester.pumpAndSettle();
+      expect(ctrl.text.contains('#'), isFalse);
+      expect(ctrl.getLineStyle(0), BlockType.paragraph);
+
       // Call toggleBold via editor state
       editorKey.currentState?.toggleBold();
       await tester.pumpAndSettle();
@@ -299,6 +317,62 @@ void main() {
 
       // Verify no exceptions thrown and editor state is consistent
       expect(editorKey.currentState, isNotNull);
+    });
+
+    testWidgets('NotionDocumentEditor strips legacy markdown # from text on load and applies line styles', (tester) async {
+      final note = Note(
+        id: 'legacy-markdown-note',
+        title: 'Legacy Title',
+        content: '''# Titolo Principale
+## Intestazione Secondaria
+### Terzo Livello
+Testo normale di corpo
+''',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(dbService: db, vaultService: vault, syncService: sync);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(note: note),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      final textFieldFinder = find.byType(TextField);
+      expect(textFieldFinder, findsOneWidget);
+      final ctrl = tester.widget<TextField>(textFieldFinder).controller as RichTextEditingController;
+
+      // Ensure no raw markdown '#' exists in the editable text
+      expect(ctrl.text.contains('#'), isFalse);
+      expect(ctrl.text.contains('Titolo Principale'), isTrue);
+      expect(ctrl.text.contains('Intestazione Secondaria'), isTrue);
+      expect(ctrl.text.contains('Terzo Livello'), isTrue);
+      expect(ctrl.text.contains('Testo normale di corpo'), isTrue);
+
+      // Verify line styles
+      expect(ctrl.getLineStyle(0), BlockType.title);
+      expect(ctrl.getLineStyle(1), BlockType.h2);
+      expect(ctrl.getLineStyle(2), BlockType.h3);
+      expect(ctrl.getLineStyle(3), BlockType.paragraph);
     });
 
     testWidgets('Typing "- " in paragraph auto-converts to bullet list', (tester) async {
@@ -424,6 +498,273 @@ void main() {
 
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+    });
+
+    test('createNote appends single or multiple tags at the top when in tag view', () async {
+      final db = DatabaseService();
+      await db.init(inMemory: true);
+      final tempDir = await Directory.systemTemp.createTemp('opennotes_test_');
+      final vault = VaultService();
+      await vault.init(customPath: tempDir.path);
+      final sync = SyncService(db, vault);
+      final provider = NotesProvider(dbService: db, vaultService: vault, syncService: sync);
+
+      try {
+        // 1. Single tag view
+        provider.selectTag('lavoro');
+        expect(provider.selectedTags, contains('lavoro'));
+
+        final noteSingle = await provider.createNote();
+        expect(noteSingle.content.startsWith('#lavoro'), isTrue);
+        expect(noteSingle.tags, contains('lavoro'));
+
+        // 2. Multiple tags view
+        provider.toggleTag('progetto');
+        expect(provider.selectedTags, containsAll(['lavoro', 'progetto']));
+
+        final noteMultiple = await provider.createNote();
+        expect(noteMultiple.content.contains('#lavoro'), isTrue);
+        expect(noteMultiple.content.contains('#progetto'), isTrue);
+        expect(noteMultiple.tags, containsAll(['lavoro', 'progetto']));
+
+        // 3. extractTitle skips tag line
+        expect(Note.extractTitle(noteMultiple.content), 'Nuova nota');
+        expect(Note.extractTitle('${noteMultiple.content}Titolo Effettivo\n'), 'Titolo Effettivo');
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
+    testWidgets('NotionDocumentEditor renders tags at top as paragraph chip and line 1 as title', (tester) async {
+      final note = Note(
+        id: 'tag-note',
+        title: 'Nuova nota',
+        content: '#lavoro #progetto\n\nTesto',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(dbService: db, vaultService: vault, syncService: sync);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(note: note),
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      final textFieldFinder = find.byType(TextField);
+      expect(textFieldFinder, findsOneWidget);
+      final ctrl = tester.widget<TextField>(textFieldFinder).controller as RichTextEditingController;
+
+      expect(ctrl.getLineStyle(0), BlockType.paragraph);
+      expect(ctrl.getLineStyle(1), BlockType.title);
+    });
+
+    test('RichTextEditingController handleTabKey indents and outdents bullet lists with Notion sub-bullet glyphs', () {
+      final ctrl = RichTextEditingController(
+        text: 'Titolo\n• Primo punto\n• Secondo punto',
+        baseStyle: const TextStyle(fontSize: 15),
+      );
+
+      // Place cursor on "• Secondo punto"
+      final secondPos = ctrl.text.indexOf('Secondo');
+      ctrl.selection = TextSelection.collapsed(offset: secondPos);
+
+      // 1. Press Tab -> indents to level 1 sub-bullet with hollow circle '◦'
+      final handled1 = ctrl.handleTabKey(outdent: false);
+      expect(handled1, isTrue);
+      expect(ctrl.text, 'Titolo\n• Primo punto\n  ◦ Secondo punto');
+
+      // 2. Press Tab again -> indents to level 2 sub-bullet with square '▪'
+      final handled2 = ctrl.handleTabKey(outdent: false);
+      expect(handled2, isTrue);
+      expect(ctrl.text, 'Titolo\n• Primo punto\n    ▪ Secondo punto');
+
+      // 3. Press Shift+Tab (outdent) -> decreases indent back to '  ◦ '
+      final handledShift1 = ctrl.handleTabKey(outdent: true);
+      expect(handledShift1, isTrue);
+      expect(ctrl.text, 'Titolo\n• Primo punto\n  ◦ Secondo punto');
+
+      // 4. Press Shift+Tab again -> decreases indent back to '• '
+      final handledShift2 = ctrl.handleTabKey(outdent: true);
+      expect(handledShift2, isTrue);
+      expect(ctrl.text, 'Titolo\n• Primo punto\n• Secondo punto');
+
+      // 5. Enter on sub-bullet continues with same indent and glyph, then exits on empty
+      ctrl.selection = TextSelection.collapsed(offset: ctrl.text.length);
+      ctrl.handleTabKey(outdent: false); // becomes '  ◦ Secondo punto'
+      expect(ctrl.text.endsWith('  ◦ Secondo punto'), isTrue);
+
+      ctrl.handleEnterKey();
+      expect(ctrl.text.endsWith('  ◦ Secondo punto\n  ◦ '), isTrue);
+
+      ctrl.handleEnterKey(); // Enter on empty sub-bullet outdents to '• '
+      expect(ctrl.text.endsWith('  ◦ Secondo punto\n• '), isTrue);
+
+      ctrl.handleEnterKey(); // Enter on empty bullet exits list
+      expect(ctrl.text.endsWith('  ◦ Secondo punto\n'), isTrue);
+    });
+
+    test('RichTextEditingController handleBackspaceKey outdents and exits sub-bullets', () {
+      final ctrl = RichTextEditingController(
+        text: 'Titolo\n  ◦ Sub-item',
+        baseStyle: const TextStyle(fontSize: 15),
+      );
+
+      // Cursor right after prefix "  ◦ " (offset 11: "Titolo\n" is 7, prefix is 4 -> offset 11)
+      final textStart = ctrl.text.indexOf('Sub-item');
+      ctrl.selection = TextSelection.collapsed(offset: textStart);
+
+      // Backspace on "  ◦ Sub-item" at start of text outdents to "• Sub-item"
+      final handled = ctrl.handleBackspaceKey();
+      expect(handled, isTrue);
+      expect(ctrl.text, 'Titolo\n• Sub-item');
+
+      // Backspace at start of "• Sub-item" removes bullet to plain paragraph
+      final bulletPos = ctrl.text.indexOf('Sub-item');
+      ctrl.selection = TextSelection.collapsed(offset: bulletPos);
+      final handled2 = ctrl.handleBackspaceKey();
+      expect(handled2, isTrue);
+      expect(ctrl.text, 'Titolo\nSub-item');
+    });
+
+    test('RichTextEditingController handleBackspaceKey does not demote headings and preserves lineStyles', () {
+      final ctrl = RichTextEditingController(
+        text: 'Titolo\nLa mia intestazione\n',
+        baseStyle: const TextStyle(fontSize: 15),
+        lineStyles: {0: BlockType.title, 1: BlockType.h1, 2: BlockType.paragraph},
+      );
+
+      // Cursor at lineStart of H1 "La mia intestazione" (offset 7)
+      ctrl.selection = const TextSelection.collapsed(offset: 7);
+      final handled = ctrl.handleBackspaceKey();
+      // Should not demote or intercept; normal line merge handles it
+      expect(handled, isFalse);
+      expect(ctrl.getLineStyle(1), BlockType.h1);
+
+      // Delete trailing newline from line 2 back into H1
+      ctrl.value = const TextEditingValue(
+        text: 'Titolo\nLa mia intestazione',
+        selection: TextSelection.collapsed(offset: 26),
+      );
+      expect(ctrl.getLineStyle(0), BlockType.title);
+      expect(ctrl.getLineStyle(1), BlockType.h1);
+    });
+
+    test('RichTextEditingController handleBackspaceKey outdents and removes checklist checkboxes', () {
+      final ctrl = RichTextEditingController(
+        text: 'Titolo\n  ○ Sub-task',
+        baseStyle: const TextStyle(fontSize: 15),
+      );
+
+      // Cursor right after prefix "  ○ " (offset 11: "Titolo\n" is 7, prefix is 4)
+      ctrl.selection = const TextSelection.collapsed(offset: 11);
+      final handled = ctrl.handleBackspaceKey();
+      expect(handled, isTrue);
+      expect(ctrl.text, 'Titolo\n○ Sub-task');
+
+      // Backspace right after prefix "○ " (offset 9) removes checkbox to normal text
+      ctrl.selection = const TextSelection.collapsed(offset: 9);
+      final handled2 = ctrl.handleBackspaceKey();
+      expect(handled2, isTrue);
+      expect(ctrl.text, 'Titolo\nSub-task');
+    });
+
+    test('Note.toMarkdown exports paragraph blocks with lineStyles preserving heading markers', () {
+      final jsonBlocks = [
+        {
+          'id': 'block-1',
+          'type': 'paragraph',
+          'text': 'Titolo\nIntestazione H1\nSotto H2\nCorpo',
+          'lineStyles': {
+            '0': 'title',
+            '1': 'h1',
+            '2': 'h2',
+            '3': 'paragraph',
+          },
+        }
+      ];
+
+      final note = Note(
+        id: 'linestyles-note',
+        title: 'Titolo',
+        content: jsonEncode(jsonBlocks),
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final md = note.toMarkdown();
+      expect(md.contains('# Titolo'), isTrue);
+      expect(md.contains('# Intestazione H1'), isTrue);
+      expect(md.contains('## Sotto H2'), isTrue);
+      expect(md.contains('Corpo'), isTrue);
+    });
+
+    test('RichTextEditingController deleting empty heading line does not transfer heading style to subsequent line', () {
+      final ctrl = RichTextEditingController(
+        text: 'Titolo\n\nRiga successiva',
+        baseStyle: const TextStyle(fontSize: 15),
+        lineStyles: {
+          0: BlockType.title,
+          1: BlockType.h1,
+          2: BlockType.paragraph,
+        },
+      );
+
+      // User deletes the empty H1 line 1 (backspacing at offset 7)
+      ctrl.value = const TextEditingValue(
+        text: 'Titolo\nRiga successiva',
+        selection: TextSelection.collapsed(offset: 6),
+      );
+
+      expect(ctrl.getLineStyle(0), BlockType.title);
+      expect(ctrl.getLineStyle(1), BlockType.paragraph);
+    });
+
+    test('RichTextEditingController backspacing at start of line below heading merges then splits cleanly', () {
+      final ctrl = RichTextEditingController(
+        text: 'Titolo\nHeader\nRiga successiva',
+        baseStyle: const TextStyle(fontSize: 15),
+        lineStyles: {
+          0: BlockType.title,
+          1: BlockType.h1,
+          2: BlockType.paragraph,
+        },
+      );
+
+      // User at start of 'Riga successiva' (offset 14) presses Backspace to merge with Header
+      ctrl.value = const TextEditingValue(
+        text: 'Titolo\nHeaderRiga successiva',
+        selection: TextSelection.collapsed(offset: 13),
+      );
+      expect(ctrl.getLineStyle(0), BlockType.title);
+      expect(ctrl.getLineStyle(1), BlockType.h1);
+
+      // User presses Enter to separate them again
+      ctrl.value = const TextEditingValue(
+        text: 'Titolo\nHeader\nRiga successiva',
+        selection: TextSelection.collapsed(offset: 14),
+      );
+      expect(ctrl.getLineStyle(0), BlockType.title);
+      expect(ctrl.getLineStyle(1), BlockType.h1);
+      expect(ctrl.getLineStyle(2), BlockType.paragraph);
     });
   });
 }
