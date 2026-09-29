@@ -10,7 +10,6 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/models/note_model.dart';
-import '../../core/models/style_span.dart';
 import '../../core/services/security_service.dart';
 import '../../core/services/vault_service.dart';
 import '../../core/state/notes_provider.dart';
@@ -41,15 +40,17 @@ class NoteBlock {
     List<List<String>>? tableData,
     GlobalKey? widgetKey,
     Map<int, BlockType>? lineStyles,
-  })  : widgetKey = widgetKey ?? GlobalKey(),
-        spans = spans ?? [],
-        tableData = tableData ?? [],
-        lineStyles = lineStyles ?? {};
+  }) : widgetKey = widgetKey ?? GlobalKey(),
+       spans = spans ?? [],
+       tableData = tableData ?? [],
+       lineStyles = lineStyles ?? {};
 
   Map<String, dynamic> toJson() {
     final effectiveText = controller != null ? controller!.text : text;
     final effectiveSpans = controller != null ? controller!.spans : spans;
-    final effectiveLineStyles = controller != null ? controller!.lineStyles : lineStyles;
+    final effectiveLineStyles = controller != null
+        ? controller!.lineStyles
+        : lineStyles;
 
     return {
       'id': id,
@@ -58,7 +59,9 @@ class NoteBlock {
       'isChecked': isChecked,
       'spans': effectiveSpans.map((s) => s.toJson()).toList(),
       if (effectiveLineStyles.isNotEmpty)
-        'lineStyles': effectiveLineStyles.map((k, v) => MapEntry(k.toString(), v.name)),
+        'lineStyles': effectiveLineStyles.map(
+          (k, v) => MapEntry(k.toString(), v.name),
+        ),
       if (tableData.isNotEmpty) 'tableData': tableData,
     };
   }
@@ -87,12 +90,16 @@ class NoteBlock {
       ),
       text: json['text'] as String? ?? '',
       isChecked: json['isChecked'] as bool? ?? false,
-      spans: (json['spans'] as List<dynamic>?)
+      spans:
+          (json['spans'] as List<dynamic>?)
               ?.map((s) => StyleSpan.fromJson(s as Map<String, dynamic>))
               .toList() ??
           [],
-      tableData: (json['tableData'] as List<dynamic>?)
-              ?.map((r) => (r as List<dynamic>).map((c) => c.toString()).toList())
+      tableData:
+          (json['tableData'] as List<dynamic>?)
+              ?.map(
+                (r) => (r as List<dynamic>).map((c) => c.toString()).toList(),
+              )
               .toList() ??
           [],
       lineStyles: parsedLineStyles,
@@ -125,7 +132,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
   bool get isPreviewMode => _isPreviewMode;
 
-  bool get _hasActiveFocus => _blocks.any((b) => b.focusNode?.hasFocus ?? false);
+  bool get _hasActiveFocus =>
+      _blocks.any((b) => b.focusNode?.hasFocus ?? false);
 
   NoteBlock? get _currentActiveBlock {
     for (final b in _blocks) {
@@ -224,7 +232,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         String? currentId;
 
         void flushText() {
-          if (currentText.isNotEmpty || (mergedBlocks.isEmpty && rawBlocks.isEmpty)) {
+          if (currentText.isNotEmpty ||
+              (mergedBlocks.isEmpty && rawBlocks.isEmpty)) {
             mergedBlocks.add(
               NoteBlock(
                 id: currentId ?? _uuid.v4(),
@@ -243,17 +252,24 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         }
 
         for (final b in rawBlocks) {
-          if (b.type == BlockType.table || b.type == BlockType.image || b.type == BlockType.divider) {
+          if (b.type == BlockType.table ||
+              b.type == BlockType.image ||
+              b.type == BlockType.divider) {
             flushText();
             mergedBlocks.add(b);
           } else {
             currentId ??= b.id;
 
             final rawLinesInBlock = b.text.split('\n');
-            final startTextOffset = currentText.isEmpty ? 0 : currentText.length + 1;
+            final outputLineStarts = <int>[];
+            final strippedLengths = <int>[];
+            final displayPrefixes = <int>[];
+            final rawLineStarts = <int>[];
+            var rawOffset = 0;
 
             for (int li = 0; li < rawLinesInBlock.length; li++) {
-              var line = rawLinesInBlock[li];
+              final rawLine = rawLinesInBlock[li];
+              var line = rawLine;
               final lineTrimmed = line.trim();
               BlockType detectedStyle = BlockType.paragraph;
 
@@ -263,7 +279,6 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 detectedStyle = b.type;
               }
 
-              // Strip any leftover markdown prefixes from previous versions
               if (lineTrimmed.startsWith('### ')) {
                 detectedStyle = BlockType.h3;
                 line = line.replaceFirst('### ', '');
@@ -271,7 +286,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 detectedStyle = BlockType.h2;
                 line = line.replaceFirst('## ', '');
               } else if (lineTrimmed.startsWith('# ')) {
-                detectedStyle = currentLineIdx == 0 ? BlockType.title : BlockType.h1;
+                detectedStyle = currentLineIdx == 0
+                    ? BlockType.title
+                    : BlockType.h1;
                 line = line.replaceFirst('# ', '');
               }
 
@@ -291,39 +308,70 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
               } else if (detectedStyle == BlockType.code) {
                 linePrefix = '``` ';
                 detectedStyle = BlockType.paragraph;
-              } else if (lineTrimmed.startsWith('- [ ]') || lineTrimmed.startsWith('[ ]')) {
+              } else if (lineTrimmed.startsWith('- [ ]') ||
+                  lineTrimmed.startsWith('[ ]')) {
                 linePrefix = '○ ';
-                line = lineTrimmed.replaceFirst(RegExp(r'^(?:-\s*)?\[\s*\]\s*'), '');
+                line = lineTrimmed.replaceFirst(
+                  RegExp(r'^(?:-\s*)?\[\s*\]\s*'),
+                  '',
+                );
               } else if (lineTrimmed.startsWith('- [x]') ||
                   lineTrimmed.startsWith('- [X]') ||
                   lineTrimmed.startsWith('[x]') ||
                   lineTrimmed.startsWith('[X]')) {
                 linePrefix = '● ';
-                line = lineTrimmed.replaceFirst(RegExp(r'^(?:-\s*)?\[[xX]\]\s*'), '');
-              } else if (lineTrimmed.startsWith('- ') || lineTrimmed.startsWith('* ')) {
+                line = lineTrimmed.replaceFirst(
+                  RegExp(r'^(?:-\s*)?\[[xX]\]\s*'),
+                  '',
+                );
+              } else if (lineTrimmed.startsWith('- ') ||
+                  lineTrimmed.startsWith('* ')) {
                 linePrefix = '• ';
                 line = lineTrimmed.substring(2);
               }
 
+              outputLineStarts.add(
+                currentText.length + (currentLineIdx > 0 ? 1 : 0),
+              );
+              rawLineStarts.add(rawOffset);
+              strippedLengths.add(
+                (rawLine.length - line.length).clamp(0, rawLine.length),
+              );
+              displayPrefixes.add(linePrefix.length);
               final finalLine = '$linePrefix$line';
               currentLineStyles[currentLineIdx] = detectedStyle;
-              if (currentText.isEmpty) {
-                currentText = finalLine;
-              } else {
-                currentText = '$currentText\n$finalLine';
-              }
+              currentText = currentLineIdx == 0
+                  ? finalLine
+                  : '$currentText\n$finalLine';
               currentLineIdx++;
+              rawOffset +=
+                  rawLine.length + (li < rawLinesInBlock.length - 1 ? 1 : 0);
             }
 
-            for (final s in b.spans) {
+            int mapSourceOffset(int sourceOffset) {
+              final clamped = sourceOffset.clamp(0, b.text.length);
+              for (var li = 0; li < rawLinesInBlock.length; li++) {
+                final sourceStart = rawLineStarts[li];
+                final sourceEnd = sourceStart + rawLinesInBlock[li].length;
+                if (clamped <= sourceEnd || li == rawLinesInBlock.length - 1) {
+                  final withinLine =
+                      (clamped - sourceStart - strippedLengths[li]).clamp(
+                        0,
+                        rawLinesInBlock[li].length - strippedLengths[li],
+                      );
+                  return outputLineStarts[li] +
+                      displayPrefixes[li] +
+                      withinLine;
+                }
+              }
+              return currentText.length;
+            }
+
+            for (final span in b.spans) {
               currentSpans.add(
-                StyleSpan(
-                  start: s.start + startTextOffset,
-                  end: s.end + startTextOffset,
-                  isBold: s.isBold,
-                  isItalic: s.isItalic,
-                  isUnderline: s.isUnderline,
-                  isStrikethrough: s.isStrikethrough,
+                span.copyWith(
+                  start: mapSourceOffset(span.start),
+                  end: mapSourceOffset(span.end),
                 ),
               );
             }
@@ -370,13 +418,19 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       if (lineTrimmed.startsWith('|') && lineTrimmed.endsWith('|')) {
         flushLines();
         final tableRows = <List<String>>[];
-        while (i < rawLines.length && rawLines[i].trim().startsWith('|') && rawLines[i].trim().endsWith('|')) {
+        while (i < rawLines.length &&
+            rawLines[i].trim().startsWith('|') &&
+            rawLines[i].trim().endsWith('|')) {
           final rowLine = rawLines[i].trim();
           if (!RegExp(r'^\|[\s\-:|]+\|$').hasMatch(rowLine)) {
             final rawParts = rowLine.split('|');
             final cells = <String>[];
-            final startIdx = (rawParts.isNotEmpty && rawParts.first.isEmpty) ? 1 : 0;
-            final endIdx = (rawParts.isNotEmpty && rawParts.last.isEmpty) ? rawParts.length - 1 : rawParts.length;
+            final startIdx = (rawParts.isNotEmpty && rawParts.first.isEmpty)
+                ? 1
+                : 0;
+            final endIdx = (rawParts.isNotEmpty && rawParts.last.isEmpty)
+                ? rawParts.length - 1
+                : rawParts.length;
             for (int c = startIdx; c < endIdx; c++) {
               cells.add(rawParts[c].trim());
             }
@@ -421,11 +475,18 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         currentLineIdx++;
       } else if (lineTrimmed.startsWith('# ')) {
         final itemText = lineTrimmed.substring(2).trim();
-        fallbackLineStyles[currentLineIdx] = currentLineIdx == 0 ? BlockType.title : BlockType.h1;
+        fallbackLineStyles[currentLineIdx] = currentLineIdx == 0
+            ? BlockType.title
+            : BlockType.h1;
         currentTextLines.add(itemText);
         currentLineIdx++;
-      } else if (lineTrimmed.startsWith('- [ ]') || lineTrimmed.startsWith('[ ]') || lineTrimmed.startsWith('○ ')) {
-        final itemText = lineTrimmed.replaceFirst(RegExp(r'^(-\s*)?(\[\s*\]|○)\s*'), '');
+      } else if (lineTrimmed.startsWith('- [ ]') ||
+          lineTrimmed.startsWith('[ ]') ||
+          lineTrimmed.startsWith('○ ')) {
+        final itemText = lineTrimmed.replaceFirst(
+          RegExp(r'^(-\s*)?(\[\s*\]|○)\s*'),
+          '',
+        );
         fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
         currentTextLines.add('○ $itemText');
         currentLineIdx++;
@@ -434,27 +495,41 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
           lineTrimmed.startsWith('[x]') ||
           lineTrimmed.startsWith('[X]') ||
           lineTrimmed.startsWith('● ')) {
-        final itemText = lineTrimmed.replaceFirst(RegExp(r'^(-\s*)?(\[[xX]\]|●)\s*'), '');
+        final itemText = lineTrimmed.replaceFirst(
+          RegExp(r'^(-\s*)?(\[[xX]\]|●)\s*'),
+          '',
+        );
         fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
         currentTextLines.add('● $itemText');
         currentLineIdx++;
       } else if (lineTrimmed.startsWith('- ') || lineTrimmed.startsWith('* ')) {
         final indent = line.substring(0, line.length - lineTrimmed.length);
-        final bulletGlyph = RichTextEditingController.getBulletForIndent(indent.length);
+        final bulletGlyph = RichTextEditingController.getBulletForIndent(
+          indent.length,
+        );
         fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
         currentTextLines.add('$indent$bulletGlyph ${lineTrimmed.substring(2)}');
         currentLineIdx++;
-      } else if (lineTrimmed.startsWith('• ') || lineTrimmed.startsWith('◦ ') || lineTrimmed.startsWith('▪ ')) {
+      } else if (lineTrimmed.startsWith('• ') ||
+          lineTrimmed.startsWith('◦ ') ||
+          lineTrimmed.startsWith('▪ ')) {
         final indent = line.substring(0, line.length - lineTrimmed.length);
-        final bulletGlyph = RichTextEditingController.getBulletForIndent(indent.length);
+        final bulletGlyph = RichTextEditingController.getBulletForIndent(
+          indent.length,
+        );
         fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
         currentTextLines.add('$indent$bulletGlyph ${lineTrimmed.substring(2)}');
         currentLineIdx++;
       } else {
         final isOnlyTags = Note.isOnlyTags(lineTrimmed);
-        if (currentLineIdx == 0 && !lineTrimmed.startsWith('|') && !isOnlyTags) {
+        if (currentLineIdx == 0 &&
+            !lineTrimmed.startsWith('|') &&
+            !isOnlyTags) {
           fallbackLineStyles[0] = BlockType.title;
-        } else if (currentLineIdx == 1 && fallbackLineStyles[0] == BlockType.paragraph && rawLines.isNotEmpty && Note.isOnlyTags(rawLines[0])) {
+        } else if (currentLineIdx == 1 &&
+            fallbackLineStyles[0] == BlockType.paragraph &&
+            rawLines.isNotEmpty &&
+            Note.isOnlyTags(rawLines[0])) {
           fallbackLineStyles[1] = BlockType.title;
         } else {
           fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
@@ -467,7 +542,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     flushLines();
 
     if (mergedBlocks.isEmpty) {
-      mergedBlocks.add(NoteBlock(id: _uuid.v4(), type: BlockType.paragraph, text: ''));
+      mergedBlocks.add(
+        NoteBlock(id: _uuid.v4(), type: BlockType.paragraph, text: ''),
+      );
     }
     _blocks.addAll(mergedBlocks);
   }
@@ -734,7 +811,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     setState(() {
       _blocks.insert(insertPos, newBlock);
       // Ensure there's an editable paragraph after the table
-      if (insertPos + 1 >= _blocks.length || _blocks[insertPos + 1].type != BlockType.paragraph) {
+      if (insertPos + 1 >= _blocks.length ||
+          _blocks[insertPos + 1].type != BlockType.paragraph) {
         _blocks.insert(
           insertPos + 1,
           NoteBlock(id: _uuid.v4(), type: BlockType.paragraph, text: ''),
@@ -821,9 +899,14 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                     runSpacing: 4,
                     alignment: WrapAlignment.center,
                     children: widget.note.tags.map((tag) {
-                      final chipColor = isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight;
+                      final chipColor = isDark
+                          ? AppleTheme.accentYellow
+                          : AppleTheme.accentAmberLight;
                       return CupertinoButton(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
                         minSize: 22,
                         color: chipColor.withOpacity(0.14),
                         borderRadius: BorderRadius.circular(12),
@@ -833,7 +916,11 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(CupertinoIcons.number, size: 11, color: chipColor),
+                            Icon(
+                              CupertinoIcons.number,
+                              size: 11,
+                              color: chipColor,
+                            ),
                             const SizedBox(width: 3),
                             Text(
                               tag,
@@ -858,10 +945,15 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                     // Clicking blank canvas focuses the last block or appends a new one
                     if (_blocks.isNotEmpty) {
                       final last = _blocks.last;
-                      if (last.type == BlockType.paragraph && last.text.isEmpty) {
+                      if (last.type == BlockType.paragraph &&
+                          last.text.isEmpty) {
                         last.focusNode?.requestFocus();
                       } else {
-                        final newBlock = NoteBlock(id: _uuid.v4(), type: BlockType.paragraph, text: '');
+                        final newBlock = NoteBlock(
+                          id: _uuid.v4(),
+                          type: BlockType.paragraph,
+                          text: '',
+                        );
                         setState(() {
                           _blocks.add(newBlock);
                         });
@@ -881,7 +973,12 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                           constraints: const BoxConstraints(maxWidth: 780),
                           child: ListView.builder(
                             controller: _scrollController,
-                            padding: EdgeInsets.fromLTRB(horizontalPadding, 8, horizontalPadding, 140),
+                            padding: EdgeInsets.fromLTRB(
+                              horizontalPadding,
+                              8,
+                              horizontalPadding,
+                              140,
+                            ),
                             itemCount: _blocks.length,
                             findChildIndexCallback: (Key key) {
                               final valueKey = key as ValueKey<String>?;
@@ -906,7 +1003,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
               ),
             ],
           ),
-          if (_tagAutocompleteBlockIndex != null && _tagAutocompleteQuery != null)
+          if (_tagAutocompleteBlockIndex != null &&
+              _tagAutocompleteQuery != null)
             _buildFloatingTagMenu(isDark),
         ],
       ),
@@ -955,7 +1053,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         }
       });
     } else {
-      block.focusNode!.onKeyEvent = (node, event) => _handleKeyEvent(event, index, block);
+      block.focusNode!.onKeyEvent = (node, event) =>
+          _handleKeyEvent(event, index, block);
     }
 
     if (block.controller == null) {
@@ -1005,7 +1104,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
           color: isDark
               ? AppleTheme.darkTextSecondary.withOpacity(0.35)
               : AppleTheme.lightTextSecondary.withOpacity(0.35),
-          fontWeight: block.type == BlockType.title ? FontWeight.w700 : FontWeight.w400,
+          fontWeight: block.type == BlockType.title
+              ? FontWeight.w700
+              : FontWeight.w400,
         ),
       ),
       onTap: () {
@@ -1041,10 +1142,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     if (_slashMenuBlockIndex == index) {
       blockBody = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          contentWidget,
-          _buildSlashMenu(block, index, isDark),
-        ],
+        children: [contentWidget, _buildSlashMenu(block, index, isDark)],
       );
     } else {
       blockBody = contentWidget;
@@ -1124,11 +1222,15 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
               margin: const EdgeInsets.only(top: 3.5, right: 10),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: block.isChecked ? AppleTheme.accentYellow : Colors.transparent,
+                color: block.isChecked
+                    ? AppleTheme.accentYellow
+                    : Colors.transparent,
                 border: Border.all(
                   color: block.isChecked
                       ? AppleTheme.accentYellow
-                      : (isDark ? AppleTheme.darkTextSecondary.withOpacity(0.5) : AppleTheme.checkboxBorder),
+                      : (isDark
+                            ? AppleTheme.darkTextSecondary.withOpacity(0.5)
+                            : AppleTheme.checkboxBorder),
                   width: 1.8,
                 ),
               ),
@@ -1169,7 +1271,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                color: isDark
+                    ? AppleTheme.darkTextSecondary
+                    : AppleTheme.lightTextSecondary,
               ),
             ),
           ),
@@ -1223,7 +1327,11 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 shape: BoxShape.circle,
               ),
               child: IconButton(
-                icon: const Icon(CupertinoIcons.trash, color: Colors.white, size: 16),
+                icon: const Icon(
+                  CupertinoIcons.trash,
+                  color: Colors.white,
+                  size: 16,
+                ),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 tooltip: 'Rimuovi immagine',
@@ -1341,7 +1449,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
             style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
-              color: isDark ? AppleTheme.darkTextPrimary : AppleTheme.lightTextPrimary,
+              color: isDark
+                  ? AppleTheme.darkTextPrimary
+                  : AppleTheme.lightTextPrimary,
             ),
           ),
         ],
@@ -1350,7 +1460,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   }
 
   TextStyle _getBaseStyleForBlock(NoteBlock block, bool isDark) {
-    final primaryColor = isDark ? AppleTheme.darkTextPrimary : AppleTheme.lightTextPrimary;
+    final primaryColor = isDark
+        ? AppleTheme.darkTextPrimary
+        : AppleTheme.lightTextPrimary;
 
     switch (block.type) {
       case BlockType.title:
@@ -1393,7 +1505,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
           fontSize: 15,
           fontStyle: FontStyle.italic,
           height: 1.55,
-          color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+          color: isDark
+              ? AppleTheme.darkTextSecondary
+              : AppleTheme.lightTextSecondary,
         );
       case BlockType.checklist:
         return TextStyle(
@@ -1401,7 +1515,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
           height: 1.45,
           letterSpacing: -0.2,
           color: block.isChecked
-              ? (isDark ? AppleTheme.darkTextSecondary.withOpacity(0.55) : AppleTheme.lightTextSecondary.withOpacity(0.55))
+              ? (isDark
+                    ? AppleTheme.darkTextSecondary.withOpacity(0.55)
+                    : AppleTheme.lightTextSecondary.withOpacity(0.55))
               : primaryColor,
           decoration: block.isChecked ? TextDecoration.lineThrough : null,
         );
@@ -1424,7 +1540,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final sel = block.controller?.selection;
     final pos = (sel != null && sel.isValid) ? sel.start : val.length;
     final textBeforeCaret = val.substring(0, math.min(pos, val.length));
-    final tagMatch = RegExp(r'(?:^|\s)#([a-zA-Z0-9_\-]*)$').firstMatch(textBeforeCaret);
+    final tagMatch = RegExp(
+      r'(?:^|\s)#([a-zA-Z0-9_\-]*)$',
+    ).firstMatch(textBeforeCaret);
 
     if (tagMatch != null) {
       final query = tagMatch.group(1) ?? '';
@@ -1480,7 +1598,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           block.focusNode?.requestFocus();
-          block.controller?.selection = TextSelection.collapsed(offset: newCaret);
+          block.controller?.selection = TextSelection.collapsed(
+            offset: newCaret,
+          );
         }
       });
     }
@@ -1498,7 +1618,10 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
     final blockBox = blockContext.findRenderObject() as RenderBox?;
     final editorBox = context.findRenderObject() as RenderBox?;
-    if (blockBox == null || editorBox == null || !blockBox.hasSize || !editorBox.hasSize) {
+    if (blockBox == null ||
+        editorBox == null ||
+        !blockBox.hasSize ||
+        !editorBox.hasSize) {
       return const SizedBox.shrink();
     }
 
@@ -1527,11 +1650,15 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     );
     final editorCaret = editorBox.globalToLocal(globalCaret);
 
-    final double lineHeight = (baseStyle.fontSize ?? 15.0) * (baseStyle.height ?? 1.55);
+    final double lineHeight =
+        (baseStyle.fontSize ?? 15.0) * (baseStyle.height ?? 1.55);
     const double menuWidth = 240.0;
     const double maxMenuHeight = 200.0;
 
-    final double left = editorCaret.dx.clamp(16.0, math.max(16.0, editorBox.size.width - menuWidth - 16.0));
+    final double left = editorCaret.dx.clamp(
+      16.0,
+      math.max(16.0, editorBox.size.width - menuWidth - 16.0),
+    );
     double top = editorCaret.dy + lineHeight + 4.0;
     if (top + maxMenuHeight > editorBox.size.height - 20) {
       top = math.max(10.0, editorCaret.dy - maxMenuHeight - 4.0);
@@ -1540,8 +1667,12 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final provider = context.read<NotesProvider>();
     final allTags = provider.tags;
     final query = (_tagAutocompleteQuery ?? '').toLowerCase();
-    final matchingTags = allTags.where((t) => t.name.toLowerCase().contains(query)).toList();
-    final chipColor = isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight;
+    final matchingTags = allTags
+        .where((t) => t.name.toLowerCase().contains(query))
+        .toList();
+    final chipColor = isDark
+        ? AppleTheme.accentYellow
+        : AppleTheme.accentAmberLight;
 
     return Positioned(
       left: left,
@@ -1583,7 +1714,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                           fontSize: 10.5,
                           fontWeight: FontWeight.bold,
                           letterSpacing: 0.6,
-                          color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                          color: isDark
+                              ? AppleTheme.darkTextSecondary
+                              : AppleTheme.lightTextSecondary,
                         ),
                       ),
                     ],
@@ -1592,7 +1725,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 Divider(
                   height: 1,
                   thickness: 0.6,
-                  color: isDark ? AppleTheme.darkDivider : AppleTheme.lightDivider,
+                  color: isDark
+                      ? AppleTheme.darkDivider
+                      : AppleTheme.lightDivider,
                 ),
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 150),
@@ -1602,10 +1737,17 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                       children: [
                         ...matchingTags.take(5).map((t) {
                           return CupertinoButton(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
                             minSize: 32,
                             borderRadius: BorderRadius.zero,
-                            onPressed: () => _selectAutocompleteTag(block, _tagAutocompleteBlockIndex!, t.name),
+                            onPressed: () => _selectAutocompleteTag(
+                              block,
+                              _tagAutocompleteBlockIndex!,
+                              t.name,
+                            ),
                             child: Row(
                               children: [
                                 Text(
@@ -1621,22 +1763,38 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                                   '${t.count}',
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                                    color: isDark
+                                        ? AppleTheme.darkTextSecondary
+                                        : AppleTheme.lightTextSecondary,
                                   ),
                                 ),
                               ],
                             ),
                           );
                         }),
-                        if (query.isNotEmpty && !matchingTags.any((t) => t.name.toLowerCase() == query))
+                        if (query.isNotEmpty &&
+                            !matchingTags.any(
+                              (t) => t.name.toLowerCase() == query,
+                            ))
                           CupertinoButton(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
                             minSize: 32,
                             borderRadius: BorderRadius.zero,
-                            onPressed: () => _selectAutocompleteTag(block, _tagAutocompleteBlockIndex!, query),
+                            onPressed: () => _selectAutocompleteTag(
+                              block,
+                              _tagAutocompleteBlockIndex!,
+                              query,
+                            ),
                             child: Row(
                               children: [
-                                Icon(CupertinoIcons.add, size: 13, color: chipColor),
+                                Icon(
+                                  CupertinoIcons.add,
+                                  size: 13,
+                                  color: chipColor,
+                                ),
                                 const SizedBox(width: 6),
                                 Expanded(
                                   child: Text(
@@ -1664,7 +1822,12 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     );
   }
 
-  void _transformBlock(NoteBlock block, BlockType newType, String cleanText, {bool isChecked = false}) {
+  void _transformBlock(
+    NoteBlock block,
+    BlockType newType,
+    String cleanText, {
+    bool isChecked = false,
+  }) {
     final ctrl = block.controller;
     if (ctrl != null) {
       final text = ctrl.text;
@@ -1702,14 +1865,18 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         block.lineStyles[0] = newType;
         block.controller?.lineStyles[0] = newType;
       }
-      block.controller?.selection = TextSelection.collapsed(offset: cleanText.length);
+      block.controller?.selection = TextSelection.collapsed(
+        offset: cleanText.length,
+      );
       _slashMenuBlockIndex = null;
     });
     _serializeAndSave(immediate: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         block.focusNode?.requestFocus();
-        block.controller?.selection = TextSelection.collapsed(offset: cleanText.length);
+        block.controller?.selection = TextSelection.collapsed(
+          offset: cleanText.length,
+        );
       }
     });
   }
@@ -1731,10 +1898,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         });
         return KeyEventResult.handled;
       }
-      if (event.logicalKey == LogicalKeyboardKey.tab || event.logicalKey == LogicalKeyboardKey.enter) {
+      if (event.logicalKey == LogicalKeyboardKey.tab ||
+          event.logicalKey == LogicalKeyboardKey.enter) {
         final allTags = context.read<NotesProvider>().tags;
         final query = (_tagAutocompleteQuery ?? '').toLowerCase();
-        final matchingTags = allTags.where((t) => t.name.toLowerCase().contains(query)).toList();
+        final matchingTags = allTags
+            .where((t) => t.name.toLowerCase().contains(query))
+            .toList();
         if (matchingTags.isNotEmpty) {
           _selectAutocompleteTag(block, index, matchingTags.first.name);
           return KeyEventResult.handled;
@@ -1745,7 +1915,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       }
     }
 
-    final isCtrlOrCmd = HardwareKeyboard.instance.isMetaPressed || HardwareKeyboard.instance.isControlPressed;
+    final isCtrlOrCmd =
+        HardwareKeyboard.instance.isMetaPressed ||
+        HardwareKeyboard.instance.isControlPressed;
 
     // Standard Rich Text Shortcuts:
     // CTRL+B: Bold
@@ -1768,8 +1940,10 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
     // CTRL+SHIFT+X or CTRL+ALT+S: Strikethrough
     if (isCtrlOrCmd &&
-        (HardwareKeyboard.instance.isShiftPressed && event.logicalKey == LogicalKeyboardKey.keyX ||
-            event.logicalKey == LogicalKeyboardKey.keyS && HardwareKeyboard.instance.isAltPressed)) {
+        (HardwareKeyboard.instance.isShiftPressed &&
+                event.logicalKey == LogicalKeyboardKey.keyX ||
+            event.logicalKey == LogicalKeyboardKey.keyS &&
+                HardwareKeyboard.instance.isAltPressed)) {
       toggleStrikethrough();
       return KeyEventResult.handled;
     }
@@ -1780,14 +1954,16 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     // TAB and SHIFT+TAB keys (Notion-style indent / outdent)
     if (event.logicalKey == LogicalKeyboardKey.tab) {
       final isShift = HardwareKeyboard.instance.isShiftPressed;
-      if (block.controller != null && block.controller!.handleTabKey(outdent: isShift)) {
+      if (block.controller != null &&
+          block.controller!.handleTabKey(outdent: isShift)) {
         _serializeAndSave(immediate: false);
         return KeyEventResult.handled;
       }
     }
 
     // ENTER key
-    if (event.logicalKey == LogicalKeyboardKey.enter && !HardwareKeyboard.instance.isShiftPressed) {
+    if (event.logicalKey == LogicalKeyboardKey.enter &&
+        !HardwareKeyboard.instance.isShiftPressed) {
       if (block.controller != null && block.controller!.handleEnterKey()) {
         _serializeAndSave(immediate: false);
         return KeyEventResult.handled;
@@ -1802,20 +1978,26 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       }
       if (sel.isCollapsed && sel.start == 0) {
         final currentText = block.controller?.text ?? block.text;
-        if (block.type != BlockType.paragraph && block.type != BlockType.title) {
+        if (block.type != BlockType.paragraph &&
+            block.type != BlockType.title) {
           if (currentText.isEmpty) {
             final isDark = Theme.of(context).brightness == Brightness.dark;
             setState(() {
               block.type = BlockType.paragraph;
               block.lineStyles.clear();
               block.controller?.lineStyles.clear();
-              block.controller?.baseStyle = _getBaseStyleForBlock(block, isDark);
+              block.controller?.baseStyle = _getBaseStyleForBlock(
+                block,
+                isDark,
+              );
             });
             _serializeAndSave(immediate: true);
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) {
                 block.focusNode?.requestFocus();
-                block.controller?.selection = const TextSelection.collapsed(offset: 0);
+                block.controller?.selection = const TextSelection.collapsed(
+                  offset: 0,
+                );
               }
             });
             return KeyEventResult.handled;
@@ -1844,7 +2026,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     // DOWN ARROW
     if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
       final textLen = ctrl?.text.length ?? 0;
-      if (sel.isCollapsed && sel.start == textLen && index < _blocks.length - 1) {
+      if (sel.isCollapsed &&
+          sel.start == textLen &&
+          index < _blocks.length - 1) {
         final next = _blocks[index + 1];
         next.focusNode?.requestFocus();
         next.controller?.selection = const TextSelection.collapsed(offset: 0);
@@ -1860,7 +2044,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final current = _blocks[index];
     final previous = _blocks[index - 1];
 
-    if (previous.type == BlockType.image || previous.type == BlockType.table || previous.type == BlockType.divider) {
+    if (previous.type == BlockType.image ||
+        previous.type == BlockType.table ||
+        previous.type == BlockType.divider) {
       previous.focusNode?.requestFocus();
       return;
     }
@@ -1873,13 +2059,14 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final prevSpans = previous.controller?.spans ?? previous.spans;
     final currSpans = current.controller?.spans ?? current.spans;
     final offset = prevText.length;
-    final shiftedCurrSpans = currSpans.map((s) => s.copyWith(
-          start: s.start + offset,
-          end: s.end + offset,
-        )).toList();
+    final shiftedCurrSpans = currSpans
+        .map((s) => s.copyWith(start: s.start + offset, end: s.end + offset))
+        .toList();
 
     // Merge line styles with offset
-    final prevLineStyles = Map<int, BlockType>.from(previous.controller?.lineStyles ?? previous.lineStyles);
+    final prevLineStyles = Map<int, BlockType>.from(
+      previous.controller?.lineStyles ?? previous.lineStyles,
+    );
     if (prevLineStyles.isEmpty &&
         (previous.type == BlockType.title ||
             previous.type == BlockType.h1 ||
@@ -1888,7 +2075,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       prevLineStyles[0] = previous.type;
     }
 
-    final currLineStyles = Map<int, BlockType>.from(current.controller?.lineStyles ?? current.lineStyles);
+    final currLineStyles = Map<int, BlockType>.from(
+      current.controller?.lineStyles ?? current.lineStyles,
+    );
     if (currLineStyles.isEmpty &&
         (current.type == BlockType.title ||
             current.type == BlockType.h1 ||
@@ -1900,7 +2089,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final prevLineCount = '\n'.allMatches(prevText).length;
     final mergedLineStyles = Map<int, BlockType>.from(prevLineStyles);
     for (final entry in currLineStyles.entries) {
-      mergedLineStyles[prevLineCount + entry.key] = entry.value;
+      if (prevText.isNotEmpty && !prevText.endsWith('\n') && entry.key == 0) {
+        continue;
+      }
+      final mergedIndex = prevLineCount + entry.key;
+      if (!mergedLineStyles.containsKey(mergedIndex)) {
+        mergedLineStyles[mergedIndex] = entry.value;
+      }
     }
 
     if (prevText.isEmpty) {
@@ -1919,13 +2114,16 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final newBaseStyle = _getBaseStyleForBlock(previous, isDark);
 
     previous.text = mergedText;
-    previous.spans = [...prevSpans, ...shiftedCurrSpans];
+    previous.spans = [
+      ...prevSpans.map((s) => s.copyWith()),
+      ...shiftedCurrSpans,
+    ];
     previous.lineStyles = mergedLineStyles;
     if (previous.controller != null) {
       previous.controller!.baseStyle = newBaseStyle;
-      previous.controller!.text = mergedText;
       previous.controller!.spans = List.from(previous.spans);
       previous.controller!.lineStyles = Map.from(mergedLineStyles);
+      previous.controller!.replaceTextWithoutReconciliation(mergedText);
     }
 
     setState(() {
@@ -1937,12 +2135,18 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         previous.focusNode?.requestFocus();
-        previous.controller?.selection = TextSelection.collapsed(offset: prevText.length);
+        previous.controller?.selection = TextSelection.collapsed(
+          offset: prevText.length,
+        );
       }
     });
   }
 
-  Widget _buildLockedPlaceholder(BuildContext context, SecurityService security, bool isDark) {
+  Widget _buildLockedPlaceholder(
+    BuildContext context,
+    SecurityService security,
+    bool isDark,
+  ) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1966,7 +2170,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
               fontSize: 20,
               fontWeight: FontWeight.w700,
               letterSpacing: -0.3,
-              color: isDark ? AppleTheme.darkTextPrimary : AppleTheme.lightTextPrimary,
+              color: isDark
+                  ? AppleTheme.darkTextPrimary
+                  : AppleTheme.lightTextPrimary,
             ),
           ),
           const SizedBox(height: 8),
@@ -1974,7 +2180,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
             'Inserisci il PIN per visualizzare o modificare il contenuto.',
             style: TextStyle(
               fontSize: 13.5,
-              color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+              color: isDark
+                  ? AppleTheme.darkTextSecondary
+                  : AppleTheme.lightTextSecondary,
             ),
           ),
           const SizedBox(height: 22),
@@ -1985,16 +2193,27 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: const [
-                Icon(CupertinoIcons.lock_open_fill, color: CupertinoColors.black, size: 16),
+                Icon(
+                  CupertinoIcons.lock_open_fill,
+                  color: CupertinoColors.black,
+                  size: 16,
+                ),
                 SizedBox(width: 8),
                 Text(
                   'Visualizza nota',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: CupertinoColors.black),
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: CupertinoColors.black,
+                  ),
                 ),
               ],
             ),
             onPressed: () async {
-              final unlocked = await LockNoteDialog.showUnlockDialog(context, security);
+              final unlocked = await LockNoteDialog.showUnlockDialog(
+                context,
+                security,
+              );
               if (unlocked) {
                 security.unlockNote(widget.note.id);
               }
@@ -2112,7 +2331,10 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
     }
     setState(() {
       rows.add(List.filled(colCount, '', growable: true));
-      final newCtrls = List.generate(colCount, (_) => TextEditingController(text: ''));
+      final newCtrls = List.generate(
+        colCount,
+        (_) => TextEditingController(text: ''),
+      );
       final newNodes = List.generate(colCount, (_) => FocusNode());
       _controllers.add(newCtrls);
       _focusNodes.add(newNodes);
@@ -2219,31 +2441,24 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
     if (maxCols == 0) return const SizedBox.shrink();
 
     final isDark = widget.isDark;
-    final dividerColor = isDark ? AppleTheme.darkDivider : AppleTheme.lightDivider;
+    final dividerColor = isDark
+        ? AppleTheme.darkDivider
+        : AppleTheme.lightDivider;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 12),
       decoration: BoxDecoration(
         color: isDark ? AppleTheme.darkCard : AppleTheme.lightCard,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: dividerColor,
-          width: 0.8,
-        ),
+        border: Border.all(color: dividerColor, width: 0.8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Table(
             border: TableBorder(
-              horizontalInside: BorderSide(
-                color: dividerColor,
-                width: 0.8,
-              ),
-              verticalInside: BorderSide(
-                color: dividerColor,
-                width: 0.8,
-              ),
+              horizontalInside: BorderSide(color: dividerColor, width: 0.8),
+              verticalInside: BorderSide(color: dividerColor, width: 0.8),
             ),
             children: List.generate(rows.length, (rIdx) {
               final isHeader = rIdx == 0;
@@ -2251,14 +2466,20 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
               return TableRow(
                 decoration: isHeader
                     ? BoxDecoration(
-                        color: isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.03),
+                        color: isDark
+                            ? Colors.white.withOpacity(0.04)
+                            : Colors.black.withOpacity(0.03),
                       )
                     : null,
                 children: List.generate(maxCols, (cIdx) {
-                  final ctrl = (rIdx < _controllers.length && cIdx < _controllers[rIdx].length)
+                  final ctrl =
+                      (rIdx < _controllers.length &&
+                          cIdx < _controllers[rIdx].length)
                       ? _controllers[rIdx][cIdx]
                       : null;
-                  final node = (rIdx < _focusNodes.length && cIdx < _focusNodes[rIdx].length)
+                  final node =
+                      (rIdx < _focusNodes.length &&
+                          cIdx < _focusNodes[rIdx].length)
                       ? _focusNodes[rIdx][cIdx]
                       : null;
 
@@ -2267,9 +2488,13 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
                   }
 
                   return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 7,
+                    ),
                     child: Focus(
-                      onKeyEvent: (fNode, event) => _handleCellKeyEvent(event, rIdx, cIdx),
+                      onKeyEvent: (fNode, event) =>
+                          _handleCellKeyEvent(event, rIdx, cIdx),
                       child: TextField(
                         controller: ctrl,
                         focusNode: node,
@@ -2277,8 +2502,12 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
                         cursorWidth: 2.0,
                         style: TextStyle(
                           fontSize: 13.5,
-                          fontWeight: isHeader ? FontWeight.w700 : FontWeight.w400,
-                          color: isDark ? AppleTheme.darkTextPrimary : AppleTheme.lightTextPrimary,
+                          fontWeight: isHeader
+                              ? FontWeight.w700
+                              : FontWeight.w400,
+                          color: isDark
+                              ? AppleTheme.darkTextPrimary
+                              : AppleTheme.lightTextPrimary,
                         ),
                         decoration: InputDecoration(
                           border: InputBorder.none,
@@ -2287,7 +2516,11 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
                           hintText: isHeader ? 'Colonna ${cIdx + 1}' : '',
                           hintStyle: TextStyle(
                             fontSize: 13,
-                            color: (isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary).withOpacity(0.4),
+                            color:
+                                (isDark
+                                        ? AppleTheme.darkTextSecondary
+                                        : AppleTheme.lightTextSecondary)
+                                    .withOpacity(0.4),
                           ),
                         ),
                         onChanged: (val) => _onCellChanged(rIdx, cIdx, val),
@@ -2302,12 +2535,7 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
-                  color: dividerColor,
-                  width: 0.8,
-                ),
-              ),
+              border: Border(top: BorderSide(color: dividerColor, width: 0.8)),
             ),
             child: Row(
               children: [
@@ -2315,13 +2543,31 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   minSize: 28,
                   onPressed: _addRow,
-                  child: Text('+ Riga', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight)),
+                  child: Text(
+                    '+ Riga',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: isDark
+                          ? AppleTheme.accentYellow
+                          : AppleTheme.accentAmberLight,
+                    ),
+                  ),
                 ),
                 CupertinoButton(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   minSize: 28,
                   onPressed: _addColumn,
-                  child: Text('+ Colonna', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight)),
+                  child: Text(
+                    '+ Colonna',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: isDark
+                          ? AppleTheme.accentYellow
+                          : AppleTheme.accentAmberLight,
+                    ),
+                  ),
                 ),
                 const Spacer(),
                 if (rows.length > 1)
@@ -2331,7 +2577,14 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
                     onPressed: () => _removeRow(rows.length - 1),
                     child: Text(
                       '- Riga',
-                      style: TextStyle(fontSize: 12, color: (isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary).withOpacity(0.7)),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color:
+                            (isDark
+                                    ? AppleTheme.darkTextSecondary
+                                    : AppleTheme.lightTextSecondary)
+                                .withOpacity(0.7),
+                      ),
                     ),
                   ),
                 if (rows.isNotEmpty && rows.first.length > 1)
@@ -2341,7 +2594,14 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
                     onPressed: () => _removeColumn(rows.first.length - 1),
                     child: Text(
                       '- Colonna',
-                      style: TextStyle(fontSize: 12, color: (isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary).withOpacity(0.7)),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color:
+                            (isDark
+                                    ? AppleTheme.darkTextSecondary
+                                    : AppleTheme.lightTextSecondary)
+                                .withOpacity(0.7),
+                      ),
                     ),
                   ),
               ],
