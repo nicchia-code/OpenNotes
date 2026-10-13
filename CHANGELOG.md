@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Fixed the native launch window size: 1280 × 760 on Linux, Windows, and macOS.
+- Fixed the checklist button and the text style menu: all leading symbols of a line are replaced, not only the first.
+- Fixed loading: a checkbox marker with no text after it (`[ ]`, `- [x]`) opens as a checklist item.
 - Added shared note actions on desktop and mobile, including duplicate, move, trash, restore, and confirmed permanent deletion.
 - Added undo for moving notes to Trash and fixed sync queueing for permanent deletions without a vault file.
 - Fixed vault file failures: a note action whose file cannot be written or removed is cancelled, the database and sync stay as they were, and a warning says the note was not saved; moving a note to Trash writes its file before the database.

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:open_notes/core/models/note_model.dart';
@@ -54,11 +55,16 @@ void main() {
     );
     await dbService.upsertNote(newNote);
 
-    // SyncService fires notifyListeners (e.g. from realtime update or sync completion)
+    // SyncService fires notifyListeners (e.g. from realtime update or sync completion); wait for
+    // the provider's reload instead of sleeping, which flakes when the machine is loaded.
+    final reloaded = Completer<void>();
+    void onChange() {
+      if (provider.notes.isNotEmpty && !reloaded.isCompleted) reloaded.complete();
+    }
+    provider.addListener(onChange);
     syncService.notifyListeners();
-
-    // Allow async microtasks in NotesProvider listener to finish
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await reloaded.future.timeout(const Duration(seconds: 5));
+    provider.removeListener(onChange);
 
     expect(provider.notes.length, 1);
     expect(provider.notes.first.title, 'Nota da Cloud');

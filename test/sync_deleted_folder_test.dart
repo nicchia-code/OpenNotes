@@ -33,7 +33,7 @@ void main() {
 
     final stored = await dbService.getNoteById('orphan-note');
     expect(stored!.folderId, Folder.defaultNotesId);
-    expect(stored.updatedAt, remoteNote.updatedAt);
+    expect(stored.updatedAt.isAtSameMomentAs(remoteNote.updatedAt), isTrue);
   });
 
   test('a cloud note whose folder exists locally keeps that folder', () async {
