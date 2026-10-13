@@ -1,11 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart';
 import '../../core/models/note_model.dart';
 import '../../core/services/security_service.dart';
 import '../../core/services/vault_service.dart';
@@ -13,6 +10,8 @@ import '../../core/state/notes_provider.dart';
 import '../drawing/apple_pencil_canvas.dart';
 import '../editor/notion_document_editor.dart';
 import '../security/lock_note_dialog.dart';
+import '../notes_list/note_action_menu.dart';
+import '../notes_list/note_actions.dart';
 import '../theme/apple_theme.dart';
 import 'mobile_keyboard_accessory_bar.dart';
 
@@ -34,7 +33,21 @@ class MobileNoteEditorScreen extends StatefulWidget {
 }
 
 class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
-  final GlobalKey<NotionDocumentEditorState> _editorKey = GlobalKey<NotionDocumentEditorState>();
+  // Last version received from the list. When the note leaves the current
+  // selection (moved, pinned, restored) or disappears from the data, the
+  // editor stays open and keeps showing this version.
+  Note? _lastKnownNote;
+  // Set once the editor closes, so it pops only once.
+  bool _leaving = false;
+  final GlobalKey<NotionDocumentEditorState> _editorKey =
+      GlobalKey<NotionDocumentEditorState>();
+
+  void _leave() {
+    if (_leaving) return;
+    _leaving = true;
+    widget.onBack?.call();
+    Navigator.maybePop(context);
+  }
 
   void _onDrawing(BuildContext context) {
     Navigator.of(context).push(
@@ -52,7 +65,9 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
 
   Future<void> _onPhoto(BuildContext context) async {
     final vault = context.read<VaultService>();
-    final result = await FilePickerPlatform.instance.pickFiles(type: FileType.image);
+    final result = await FilePickerPlatform.instance.pickFiles(
+      type: FileType.image,
+    );
     if (result.isNotEmpty && result.first.path != null) {
       final file = File(result.first.path!);
       final bytes = await file.readAsBytes();
@@ -63,11 +78,13 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
     }
   }
 
-  Future<void> _onLock(BuildContext context, NotesProvider provider, SecurityService security) async {
-    final currentNote = provider.notes.firstWhere(
-      (n) => n.id == widget.note.id,
-      orElse: () => widget.note,
-    );
+  Future<void> _onLock(
+    BuildContext context,
+    NotesProvider provider,
+    SecurityService security,
+  ) async {
+    // Same version the editor shows, so the lock button never reads a stale copy.
+    final currentNote = _lastKnownNote ?? widget.note;
 
     if (currentNote.isLocked) {
       final unlocked = await LockNoteDialog.showUnlockDialog(context, security);
@@ -83,124 +100,29 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
     }
   }
 
-  void _onShare(Note currentNote) {
-    SharePlus.instance.share(
-      ShareParams(
-        text: '${currentNote.title}\n\n${currentNote.toMarkdown()}',
-        subject: currentNote.title,
-      ),
-    );
-  }
-
-  Future<void> _onExportMarkdown(BuildContext context, Note currentNote) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final markdown = currentNote.toMarkdown();
-    final cleanTitle = currentNote.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
-    final fileName = '${cleanTitle.isEmpty ? 'Nota' : cleanTitle}.md';
-    final bytes = Uint8List.fromList(utf8.encode(markdown));
-
-    final uri = await FilePicker.saveFile(
-      dialogTitle: 'Esporta come Markdown (.md)',
-      fileName: fileName,
-      bytes: bytes,
-      mimeType: 'text/markdown',
-    );
-
-    if (uri != null && mounted) {
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text('Nota esportata come $fileName'),
-          behavior: SnackBarBehavior.floating,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    }
-  }
-
-  void _showMoreMenu(BuildContext context, NotesProvider provider, SecurityService security, Note currentNote) {
-    showCupertinoModalPopup(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: Text(
-          currentNote.title.isEmpty ? 'Nuova nota' : currentNote.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        actions: [
-          // Pin / Unpin
-          CupertinoActionSheetAction(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(currentNote.isPinned ? CupertinoIcons.pin_slash : CupertinoIcons.pin, size: 20),
-                const SizedBox(width: 8),
-                Text(currentNote.isPinned ? 'Rimuovi da fissate' : 'Fissa nota'),
-              ],
+  void _showMoreMenu(BuildContext context) {
+    // The menu acts on the version the editor shows, not the stored copy, which
+    // lags behind the 400 ms save wait.
+    final note = _lastKnownNote ?? widget.note;
+    // Protected notes stay on the placeholder after trash or delete: the Model gives Protected only the back exit.
+    final security = context.read<SecurityService>();
+    final isProtected = note.isLocked && !security.isNoteUnlocked(note.id);
+    NoteActions.showMobile(
+      context,
+      note,
+      onRemoved: isProtected ? null : _leave,
+      onOpenAfterDuplicate: (opened) {
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          CupertinoPageRoute(
+            builder: (_) => MobileNoteEditorScreen(
+              note: opened,
+              backFolderTitle: widget.backFolderTitle,
+              onBack: widget.onBack,
             ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              provider.togglePin(currentNote.id);
-            },
           ),
-
-          // Lock / Unlock
-          CupertinoActionSheetAction(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(currentNote.isLocked ? CupertinoIcons.lock_open : CupertinoIcons.lock, size: 20),
-                const SizedBox(width: 8),
-                Text(currentNote.isLocked ? 'Rimuovi protezione' : 'Proteggi nota'),
-              ],
-            ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              _onLock(context, provider, security);
-            },
-          ),
-
-          // Export as Markdown
-          CupertinoActionSheetAction(
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.arrow_down_doc, size: 20),
-                SizedBox(width: 8),
-                Text('Esporta come Markdown (.md)'),
-              ],
-            ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              _onExportMarkdown(context, currentNote);
-            },
-          ),
-
-          // Delete
-          CupertinoActionSheetAction(
-            isDestructiveAction: true,
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(CupertinoIcons.trash, color: CupertinoColors.destructiveRed, size: 20),
-                SizedBox(width: 8),
-                Text('Elimina nota'),
-              ],
-            ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              provider.moveToTrash(currentNote.id);
-              widget.onBack?.call();
-              Navigator.maybePop(context);
-            },
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          isDefaultAction: true,
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Annulla'),
-        ),
-      ),
+        );
+      },
     );
   }
 
@@ -210,13 +132,16 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
     final security = context.watch<SecurityService>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor = isDark ? AppleTheme.darkEditor : AppleTheme.lightEditor;
-    final accentColor = isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight;
+    final accentColor = isDark
+        ? AppleTheme.accentYellow
+        : AppleTheme.accentAmberLight;
 
-    // Get reactive note instance from provider
-    final currentNote = provider.notes.firstWhere(
-      (n) => n.id == widget.note.id,
-      orElse: () => widget.note,
-    );
+    // Reactive note from the provider; falls back to the last one received
+    final listedNotes = provider.notes.where((n) => n.id == widget.note.id);
+    if (listedNotes.isNotEmpty) {
+      _lastKnownNote = listedNotes.first;
+    }
+    final currentNote = _lastKnownNote ?? widget.note;
 
     return CupertinoPageScaffold(
       backgroundColor: bgColor,
@@ -226,26 +151,30 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
         leading: CupertinoNavigationBarBackButton(
           previousPageTitle: widget.backFolderTitle ?? 'Note',
           color: accentColor,
-          onPressed: () {
-            widget.onBack?.call();
-            Navigator.maybePop(context);
-          },
+          onPressed: _leave,
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             // Share button
-            CupertinoButton(
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Icon(CupertinoIcons.share, color: accentColor, size: 22),
-              onPressed: () => _onShare(currentNote),
-            ),
+            if (!currentNote.isDeleted)
+              CupertinoButton(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Icon(CupertinoIcons.share, color: accentColor, size: 22),
+                onPressed: () => NoteActions.handle(
+                  context,
+                  currentNote,
+                  NoteMenuAction.share,
+                ),
+              ),
 
             // Lock button
             CupertinoButton(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Icon(
-                currentNote.isLocked ? CupertinoIcons.lock_fill : CupertinoIcons.lock,
+                currentNote.isLocked
+                    ? CupertinoIcons.lock_fill
+                    : CupertinoIcons.lock,
                 color: accentColor,
                 size: 21,
               ),
@@ -255,8 +184,12 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
             // More options button
             CupertinoButton(
               padding: const EdgeInsets.only(left: 4),
-              child: Icon(CupertinoIcons.ellipsis_circle, color: accentColor, size: 22),
-              onPressed: () => _showMoreMenu(context, provider, security, currentNote),
+              child: Icon(
+                CupertinoIcons.ellipsis_circle,
+                color: accentColor,
+                size: 22,
+              ),
+              onPressed: () => _showMoreMenu(context),
             ),
           ],
         ),
@@ -266,10 +199,7 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
           children: [
             // Main Note Editor
             Expanded(
-              child: NotionDocumentEditor(
-                key: _editorKey,
-                note: currentNote,
-              ),
+              child: NotionDocumentEditor(key: _editorKey, note: currentNote),
             ),
 
             // Keyboard Accessory Toolbar
@@ -278,7 +208,9 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
               onTable: () => _editorKey.currentState?.insertTable(),
               onDrawing: () => _onDrawing(context),
               onPhoto: () => _onPhoto(context),
-              onSelectBlockType: (type) => _editorKey.currentState?.setBlockType(type),
+              onBlockMenu: () => _editorKey.currentState?.openBlockMenu(),
+              onSelectBlockType: (type) =>
+                  _editorKey.currentState?.setBlockType(type),
               onBold: () => _editorKey.currentState?.toggleBold(),
               onItalic: () => _editorKey.currentState?.toggleItalic(),
               onUnderline: () => _editorKey.currentState?.toggleUnderline(),

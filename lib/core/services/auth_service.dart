@@ -1,12 +1,19 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'sync_service.dart';
 
 /// Handles user authentication via Supabase Auth (Google SSO).
 class AuthService extends ChangeNotifier {
+  final SyncService _syncService;
   HttpServer? _oauthServer;
 
+  AuthService(this._syncService);
+
+  /// The Supabase client, available only once the cloud connection is ready.
   SupabaseClient? get _client {
+    if (!_syncService.isConfigured) return null;
     try {
       return Supabase.instance.client;
     } catch (_) {
@@ -22,7 +29,9 @@ class AuthService extends ChangeNotifier {
   /// Sign In with Google SSO (OAuth) with desktop loopback support
   Future<bool> signInWithGoogle() async {
     final client = _client;
-    if (client == null) throw Exception('Supabase non è ancora configurato.');
+    if (client == null) {
+      throw Exception(_syncService.notConfiguredMessage ?? 'Supabase non è ancora configurato.');
+    }
 
     String? redirectUrl;
 
@@ -40,10 +49,31 @@ class AuthService extends ChangeNotifier {
       redirectUrl = 'opennotes://login-callback';
     }
 
-    return await client.auth.signInWithOAuth(
-      OAuthProvider.google,
-      redirectTo: redirectUrl,
-    );
+    _syncService.setAwaitingLogin(true);
+    bool opened;
+    try {
+      opened = await client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: redirectUrl,
+      );
+    } on PlatformException catch (e) {
+      // url_launcher throws when the browser cannot be opened: same outcome as `false`.
+      debugPrint('Impossibile aprire il browser: $e');
+      opened = false;
+    } catch (e) {
+      // Any other start failure (e.g. a cloud service error) leaves the user signed out, like `false`.
+      debugPrint('Avvio accesso Google fallito: $e');
+      opened = false;
+    }
+    if (!opened) await _abortSignIn();
+    return opened;
+  }
+
+  /// Ends a sign-in that did not reach the browser: closes the local return server, then leaves Awaiting login.
+  Future<void> _abortSignIn() async {
+    await _oauthServer?.close(force: true);
+    _oauthServer = null;
+    _syncService.setAwaitingLogin(false);
   }
 
   void _listenForOAuthCallback(HttpServer server, SupabaseClient client) {
@@ -72,6 +102,7 @@ class AuthService extends ChangeNotifier {
           ''');
         } catch (e) {
           request.response.write('<h2>Errore sessione: $e</h2>');
+          _syncService.setAwaitingLogin(false);
         } finally {
           await request.response.close();
           await server.close(force: true);
@@ -80,6 +111,7 @@ class AuthService extends ChangeNotifier {
       } else if (fullUri.queryParameters.containsKey('error')) {
         final err = fullUri.queryParameters['error_description'] ?? fullUri.queryParameters['error'] ?? 'Errore sconosciuto';
         request.response.write('<h2>Errore autenticazione: $err</h2>');
+        _syncService.setAwaitingLogin(false);
         await request.response.close();
         await server.close(force: true);
         _oauthServer = null;
@@ -104,12 +136,19 @@ class AuthService extends ChangeNotifier {
     });
   }
 
-  /// Sign Out
-  Future<void> signOut() async {
+  /// Signs out on this device. Returns false when the cloud session could not be closed (e.g. no network):
+  /// the local sign-out still happens, the cloud session expires on its own.
+  Future<bool> signOut() async {
     final client = _client;
-    if (client != null) {
+    if (client == null) return true;
+    var closedOnCloud = true;
+    try {
       await client.auth.signOut();
-      notifyListeners();
+    } catch (e) {
+      debugPrint('Sessione cloud non chiusa: $e');
+      closedOnCloud = false;
     }
+    notifyListeners();
+    return closedOnCloud;
   }
 }

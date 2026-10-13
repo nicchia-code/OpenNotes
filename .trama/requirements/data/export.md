@@ -1,0 +1,12 @@
+---
+description: Usa quando leggi o scrivi i file Markdown del vault locale, la loro intestazione di metadati o gli allegati.
+---
+# Export data
+
+## vault-file
+- Posizione del vault: sottocartella `OpenNotes_Vault` nella cartella documenti dell'applicazione, creata all'avvio se manca. È previsto un percorso personalizzato, ma l'app non lo imposta mai.
+- Tutti i file delle note stanno nella cartella principale del vault, senza sottocartelle per le cartelle dell'utente; estensione `.md`.
+- Allegati (immagini e disegni): sottocartella `attachments` del vault, creata all'avvio se manca; ogni allegato è un file `att_<millisecondi dall'epoca>.<estensione>` e nella nota è riferito con il percorso relativo `attachments/<nome>`, risolto rispetto al vault; un riferimento che non inizia con `attachments/` è trattato come percorso assoluto.
+- Struttura del file: riga `---`, intestazione YAML, riga `---`, riga vuota, poi il contenuto della nota così com'è memorizzato (testo oppure documento a blocchi serializzato), senza conversione in Markdown.
+- Campi scritti nell'intestazione, in quest'ordine: `id`, `title`, `folder_id`, `tags` (lista), `pinned`, `locked`, `deleted` (booleani), `created_at`, `updated_at` (ISO 8601 in UTC). Data di eliminazione e data di sincronizzazione non vengono scritte.
+- Lettura di un file: accetta anche `is_pinned`, `is_locked`, `is_deleted`; un'intestazione YAML malformata viene ignorata. Valori mancanti: `id` dal nome del file senza estensione, `title` dal primo testo significativo del corpo, `folder_id` = `notes`, date mancanti o illeggibili = momento della lettura. I tag sono l'unione di quelli dell'intestazione e degli hashtag del corpo, senza `#`, in minuscolo, senza duplicati, ordinati.

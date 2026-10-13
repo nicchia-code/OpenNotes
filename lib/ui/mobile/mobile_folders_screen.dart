@@ -11,14 +11,12 @@ import '../theme/apple_theme.dart';
 class MobileFoldersScreen extends StatelessWidget {
   final VoidCallback? onOpenNotesList;
   final ValueChanged<String>? onSelectFolder;
-  final ValueChanged<String?>? onSelectTag;
   final VoidCallback? onNewNote;
 
   const MobileFoldersScreen({
     super.key,
     this.onOpenNotesList,
     this.onSelectFolder,
-    this.onSelectTag,
     this.onNewNote,
   });
 
@@ -183,8 +181,7 @@ class MobileFoldersScreen extends StatelessWidget {
                             textColor: textColor,
                             secondaryColor: secondaryTextColor,
                             onTap: () {
-                              provider.selectTag(tags[i].name);
-                              onSelectTag?.call(tags[i].name);
+                              provider.selectTag(tags[i].name, toggleOff: false);
                               onOpenNotesList?.call();
                             },
                           ),
@@ -261,12 +258,15 @@ class MobileFoldersScreen extends StatelessWidget {
                     ),
                   ),
 
-                  // Nuova nota (Bottom Right)
-                  CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    onPressed: onNewNote,
-                    child: Icon(CupertinoIcons.square_pencil, color: accentColor, size: 24),
-                  ),
+                  // Nuova nota (Bottom Right), hidden while the trash is open
+                  if (provider.isTrashSelected)
+                    const SizedBox(width: 24)
+                  else
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: onNewNote,
+                      child: Icon(CupertinoIcons.square_pencil, color: accentColor, size: 24),
+                    ),
                 ],
               ),
             ),

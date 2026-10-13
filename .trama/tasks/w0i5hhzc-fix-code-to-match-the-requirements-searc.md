@@ -1,0 +1,30 @@
+---
+column: done
+technical: true
+refs:
+  - requirements/rules#note-browser
+drift: pgtensg9
+proposal: null
+agent: false
+created: 2026-10-12T15:18:03.642Z
+finished: 2026-10-12T16:30:15.540Z
+---
+# Fix code to match the Requirements: Search ignores the content of protected notes, the Requirement counts it
+
+## What happens
+
+La ricerca dell'elenco confronta il testo cercato solo con il titolo e i tag delle note protette, finché non vengono sbloccate. Il contenuto nascosto non prende parte alla ricerca: una nota protetta compare solo se il testo cercato è nel suo titolo o tra i suoi tag.
+
+## What should happen
+
+Il requisito dice che la ricerca si combina con vista e tag e che una nota corrisponde se il titolo o il **contenuto grezzo** contiene il testo cercato, senza eccezioni per le note protette. La regola di protezione dice che il contenuto è nascosto nell'editor, non che sia escluso dalla ricerca.
+
+## Chosen option
+
+**Keep protected text out of search**
+
+Le note protette restano trovabili solo per titolo e tag, come oggi, e il requisito di ricerca va riscritto per escludere il contenuto nascosto. Nessuna informazione sul testo protetto esce dal lucchetto. Costo: una parola presente solo nel corpo di una nota protetta non la fa comparire finché la nota non viene sbloccata.
+
+## Where in the code
+
+lib/core/services/database_service.dart, getNotes (search filter); test/tags_test.dart, 'text search ignores content of locked notes until unlocked'

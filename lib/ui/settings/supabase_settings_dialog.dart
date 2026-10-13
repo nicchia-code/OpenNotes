@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +20,30 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
   String? _statusMessage;
   bool _isError = false;
 
+  Future<void> _handleSignOut(AuthService auth) async {
+    setState(() {
+      _isConnecting = true;
+      _statusMessage = 'Disconnessione in corso...';
+      _isError = false;
+    });
+
+    try {
+      final closedOnCloud = await auth.signOut();
+      if (mounted) {
+        setState(() {
+          _statusMessage = closedOnCloud
+              ? null
+              : 'Disconnesso da questo dispositivo. La sessione sul cloud non è stata chiusa perché manca la connessione: scadrà da sola.';
+          _isError = false;
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isConnecting = false);
+      }
+    }
+  }
+
   Future<void> _handleGoogleSignIn(AuthService auth) async {
     setState(() {
       _isConnecting = true;
@@ -34,11 +59,21 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
           _isError = true;
         });
       } else if (mounted) {
+        final sync = context.read<SyncService>();
+        await _waitForReturn(sync);
+        if (!mounted) return;
+        if (!sync.isAuthenticated) {
+          setState(() {
+            _statusMessage = 'Accesso Google non completato.';
+            _isError = true;
+          });
+          return;
+        }
         setState(() {
           _statusMessage = 'Accesso completato! Sincronizzazione in corso...';
           _isError = false;
         });
-        await context.read<SyncService>().syncNow();
+        await sync.syncNow();
         if (mounted) {
           setState(() {
             _statusMessage = 'Sincronizzazione completata con successo.';
@@ -47,8 +82,10 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
       }
     } catch (e) {
       if (mounted) {
+        // Missing build variables: show the exact notice, without the "Errore:" prefix.
+        final notice = context.read<SyncService>().notConfiguredMessage;
         setState(() {
-          _statusMessage = 'Errore: ${e.toString().replaceAll('Exception:', '')}';
+          _statusMessage = notice ?? 'Errore: ${e.toString().replaceAll('Exception:', '')}';
           _isError = true;
         });
       }
@@ -56,6 +93,22 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
       if (mounted) {
         setState(() => _isConnecting = false);
       }
+    }
+  }
+
+  /// Waits until the return from Google ends Awaiting login (success, error, or the local server closed).
+  Future<void> _waitForReturn(SyncService sync) async {
+    if (!sync.isAwaitingLogin) return;
+    final done = Completer<void>();
+    void onChange() {
+      if (!sync.isAwaitingLogin && !done.isCompleted) done.complete();
+    }
+
+    sync.addListener(onChange);
+    try {
+      await done.future;
+    } finally {
+      sync.removeListener(onChange);
     }
   }
 
@@ -171,7 +224,7 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
                       CupertinoButton(
                         padding: EdgeInsets.zero,
                         child: const Text('Disconnetti', style: TextStyle(color: CupertinoColors.destructiveRed, fontSize: 13)),
-                        onPressed: () => auth.signOut(),
+                        onPressed: () => _handleSignOut(auth),
                       ),
                     ],
                   ),
@@ -225,12 +278,14 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
                 ),
               ],
 
-              if (_statusMessage != null) ...[
+              if (sync.signInError != null || _statusMessage != null) ...[
                 const SizedBox(height: 14),
                 Text(
-                  _statusMessage!,
+                  sync.signInError != null ? 'Accesso non completato: ${sync.signInError}' : _statusMessage!,
                   style: TextStyle(
-                    color: _isError ? CupertinoColors.destructiveRed : CupertinoColors.activeGreen,
+                    color: sync.signInError != null || _isError
+                        ? CupertinoColors.destructiveRed
+                        : CupertinoColors.activeGreen,
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                   ),

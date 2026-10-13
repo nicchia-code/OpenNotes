@@ -116,3 +116,7 @@ CREATE POLICY "Users can view attachments"
 -- 7. Realtime Publication
 ALTER PUBLICATION supabase_realtime ADD TABLE public.notes;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.folders;
+
+-- Deletes carry the full row, so the realtime filter on user_id can match them
+ALTER TABLE public.notes REPLICA IDENTITY FULL;
+ALTER TABLE public.folders REPLICA IDENTITY FULL;

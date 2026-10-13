@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' show AppExitResponse;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
@@ -24,7 +26,7 @@ void main() async {
 
     const windowOptions = WindowOptions(
       size: Size(1280, 760),
-      minimumSize: Size(640, 480),
+      minimumSize: Size(680, 480),
       center: true,
       backgroundColor: Colors.transparent,
       skipTaskbar: false,
@@ -47,7 +49,7 @@ void main() async {
   final syncService = SyncService(dbService, vaultService);
   await syncService.init();
 
-  final authService = AuthService();
+  final authService = AuthService(syncService);
 
   final securityService = SecurityService();
   await securityService.init();
@@ -56,17 +58,9 @@ void main() async {
     dbService: dbService,
     vaultService: vaultService,
     syncService: syncService,
+    securityService: securityService,
   );
   await notesProvider.init();
-
-  // If user is already authenticated from previous session, sync cloud notes first
-  if (syncService.isAuthenticated) {
-    try {
-      await syncService.syncNow();
-    } catch (e) {
-      debugPrint('Initial startup sync error: $e');
-    }
-  }
 
   // Populate sample note if first launch and no notes exist
   final existingNotes = await dbService.getNotes();
@@ -211,7 +205,7 @@ Future<void> _createWelcomeNotes(NotesProvider provider) async {
     initialTitle: 'Benvenuto in OpenNotes',
     initialContent: jsonEncode(welcomeBlocks),
   );
-  await provider.togglePin(note1.id);
+  if (note1 != null) await provider.togglePin(note1.id);
 
   await provider.createNote(
     initialTitle: 'Pianificazione & Attività',
@@ -219,12 +213,75 @@ Future<void> _createWelcomeNotes(NotesProvider provider) async {
   );
 }
 
-class OpenNotesApp extends StatelessWidget {
+class OpenNotesApp extends StatefulWidget {
   const OpenNotesApp({super.key});
+
+  @override
+  State<OpenNotesApp> createState() => _OpenNotesAppState();
+}
+
+class _OpenNotesAppState extends State<OpenNotesApp> {
+  final _messengerKey = GlobalKey<ScaffoldMessengerState>();
+  late final NotesProvider _notes;
+  late final AppLifecycleListener _lifecycle;
+  bool _saveFailureShown = false;
+  late final StreamSubscription<void> _actionFailureSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _notes = context.read<NotesProvider>();
+    _notes.addListener(_onNotesChanged);
+    // One warning for each note action cancelled because its vault file could not be written.
+    _actionFailureSub = _notes.actionFailures.listen((_) {
+      _messengerKey.currentState?.showSnackBar(
+        const SnackBar(content: Text("Nota non salvata: l'azione è stata annullata.")),
+      );
+    });
+    // Launch notice: the cloud stays not configured while a build variable is missing; shown once.
+    final cloudNotice = context.read<SyncService>().notConfiguredMessage;
+    if (cloudNotice != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _messengerKey.currentState?.showSnackBar(SnackBar(content: Text(cloudNotice)));
+      });
+    }
+    // Leaving the foreground (background, or closing the window) writes the waiting edit now.
+    _lifecycle = AppLifecycleListener(
+      onStateChange: (state) {
+        if (state != AppLifecycleState.resumed) _notes.flushOnAppLeavingForeground();
+      },
+      onExitRequested: () async {
+        await _notes.flushOnAppLeavingForeground();
+        return AppExitResponse.exit;
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    _notes.removeListener(_onNotesChanged);
+    _actionFailureSub.cancel();
+    super.dispose();
+  }
+
+  /// Warns once per failure: the note text stays unsaved until a write succeeds.
+  void _onNotesChanged() {
+    if (!_notes.contentSaveFailed) {
+      _saveFailureShown = false;
+      return;
+    }
+    if (_saveFailureShown) return;
+    _saveFailureShown = true;
+    _messengerKey.currentState?.showSnackBar(
+      const SnackBar(content: Text('Nota non salvata: il salvataggio verrà ritentato.')),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      scaffoldMessengerKey: _messengerKey,
       title: 'OpenNotes',
       debugShowCheckedModeBanner: false,
       theme: AppleTheme.getLightTheme(),

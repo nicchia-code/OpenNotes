@@ -19,7 +19,7 @@ class LockNoteDialog {
               children: const [
                 Icon(CupertinoIcons.lock_shield_fill, color: AppleTheme.accentYellow, size: 28),
                 SizedBox(width: 8),
-                Text('Nota Protetta', style: TextStyle(fontWeight: FontWeight.bold)),
+                Flexible(child: Text('Nota Protetta', style: TextStyle(fontWeight: FontWeight.bold))),
               ],
             ),
             content: Padding(
@@ -136,7 +136,7 @@ class LockNoteDialog {
                   final pin = pinController.text.trim();
                   final confirm = confirmController.text.trim();
 
-                  if (pin.length < 4) {
+                  if (pin.runes.length < 4) {
                     setState(() => errorMessage = 'Il PIN deve avere almeno 4 cifre.');
                     return;
                   }

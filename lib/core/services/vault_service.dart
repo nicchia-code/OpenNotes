@@ -1,15 +1,13 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:yaml/yaml.dart';
 import 'package:yaml_writer/yaml_writer.dart';
 import '../models/note_model.dart';
+import 'database_service.dart';
 
 /// Manages direct file system operations on the Markdown vault:
-/// - Writing and reading .md files with YAML Frontmatter
+/// - Writing .md files with YAML Frontmatter
 /// - Managing attachments/ folder for images and drawings
-/// - Synchronizing with disk changes
 class VaultService {
   Directory? _vaultDir;
   Directory? _attachmentsDir;
@@ -49,71 +47,6 @@ class VaultService {
     }
   }
 
-  /// Parses a Markdown file with YAML Frontmatter into a Note object.
-  static ({Note note, String rawContent}) parseMarkdownFile(String fileContent, String filePath) {
-    final frontmatterRegex = RegExp(r'^---\r?\n([\s\S]*?)\r?\n---\r?\n?');
-    final match = frontmatterRegex.firstMatch(fileContent);
-
-    Map<String, dynamic> metadata = {};
-    String bodyContent = fileContent;
-
-    if (match != null) {
-      final yamlString = match.group(1) ?? '';
-      try {
-        final doc = loadYaml(yamlString);
-        if (doc is YamlMap) {
-          metadata = Map<String, dynamic>.from(doc);
-        }
-      } catch (e) {
-        debugPrint('Error loading YAML frontmatter: $e');
-      }
-      bodyContent = fileContent.substring(match.end);
-    }
-
-    final id = metadata['id']?.toString() ?? p.basenameWithoutExtension(filePath);
-    final title = metadata['title']?.toString() ?? Note.extractTitle(bodyContent);
-    final folderId = metadata['folder_id']?.toString() ?? 'notes';
-    final isPinned = metadata['pinned'] == true || metadata['is_pinned'] == true;
-    final isLocked = metadata['locked'] == true || metadata['is_locked'] == true;
-    final isDeleted = metadata['deleted'] == true || metadata['is_deleted'] == true;
-
-    final combinedTags = <String>{};
-    if (metadata['tags'] is List) {
-      for (final e in (metadata['tags'] as List)) {
-        final clean = e.toString().replaceAll('#', '').trim().toLowerCase();
-        if (clean.isNotEmpty) combinedTags.add(clean);
-      }
-    }
-    for (final t in Note.extractTagsFromContent(bodyContent)) {
-      final clean = t.replaceAll('#', '').trim().toLowerCase();
-      if (clean.isNotEmpty) combinedTags.add(clean);
-    }
-    final tags = combinedTags.toList()..sort();
-
-    final createdAt = metadata['created_at'] != null
-        ? DateTime.tryParse(metadata['created_at'].toString()) ?? DateTime.now()
-        : DateTime.now();
-    final updatedAt = metadata['updated_at'] != null
-        ? DateTime.tryParse(metadata['updated_at'].toString()) ?? DateTime.now()
-        : DateTime.now();
-
-    final note = Note(
-      id: id,
-      title: title,
-      content: bodyContent,
-      folderId: folderId,
-      tags: tags,
-      isPinned: isPinned,
-      isLocked: isLocked,
-      isDeleted: isDeleted,
-      createdAt: createdAt,
-      updatedAt: updatedAt,
-      filePath: filePath,
-    );
-
-    return (note: note, rawContent: bodyContent);
-  }
-
   /// Serializes a Note to Markdown with standard YAML Frontmatter.
   static String serializeNoteToMarkdown(Note note) {
     final yamlWriter = YamlWriter();
@@ -133,7 +66,8 @@ class VaultService {
     return '---\n$yamlString\n---\n\n${note.content}';
   }
 
-  /// Saves or updates a note file on disk.
+  /// Saves a note to the file named after its current title and returns that path.
+  /// A title change writes a new file and leaves the old one in the vault.
   Future<String> saveNote(Note note, {String? folderPath}) async {
     final targetFolder = folderPath != null ? Directory(folderPath) : vaultDir;
     if (!await targetFolder.exists()) {
@@ -145,20 +79,43 @@ class VaultService {
         .replaceAll(RegExp(r'[\\/:*?"<>|{}\[\]]'), '_')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    if (sanitizedTitle.startsWith('_{') || sanitizedTitle.startsWith('{') || sanitizedTitle.length > 50) {
-      sanitizedTitle = sanitizedTitle.length > 50 ? sanitizedTitle.substring(0, 50).trim() : '';
+    final titleChars = sanitizedTitle.runes.length;
+    if (sanitizedTitle.startsWith('_{') || sanitizedTitle.startsWith('{') || titleChars > 50) {
+      sanitizedTitle = titleChars > 50 ? String.fromCharCodes(sanitizedTitle.runes.take(50)).trim() : '';
     }
     final safeId = note.id.length >= 8 ? note.id.substring(0, 8) : note.id;
     final fileName = sanitizedTitle.isEmpty
         ? 'nota_$safeId.md'
         : '$sanitizedTitle.md';
 
-    final filePath = note.filePath ?? p.join(targetFolder.path, fileName);
-    final file = File(filePath);
-
+    final filePath = p.join(targetFolder.path, fileName);
     final content = serializeNoteToMarkdown(note);
-    await file.writeAsString(content);
+    await File(filePath).writeAsString(content);
     return filePath;
+  }
+
+  /// Removes the Markdown file a note was last written to, if it still exists.
+  Future<void> deleteNoteFile(String? filePath) async {
+    if (filePath == null) return;
+    final file = File(filePath);
+    if (await file.exists()) await file.delete();
+  }
+
+  /// Removes the Markdown file a note was last written to, unless another note still
+  /// in [db] (trash included) is written to the same file. In that case the file is
+  /// rewritten with the current content of that note (the most recently updated one),
+  /// so the deleted note's text does not stay in the vault. [exceptNoteId] is the note
+  /// being deleted, which still sits in [db] when the file goes first. Notes already
+  /// removed from [db] in the same operation do not count, so the last one removed
+  /// deletes the file.
+  Future<void> deleteNoteFileIfUnused(DatabaseService db, String? filePath, {String? exceptNoteId}) async {
+    if (filePath == null) return;
+    final remaining = await db.getNotesWrittenTo(filePath, exceptNoteId: exceptNoteId);
+    if (remaining.isEmpty) {
+      await deleteNoteFile(filePath);
+      return;
+    }
+    await File(filePath).writeAsString(serializeNoteToMarkdown(remaining.first));
   }
 
   /// Saves an image or drawing bytes to attachments/ and returns relative path.
@@ -172,21 +129,5 @@ class VaultService {
   /// Resolves relative attachment path to absolute File
   File resolveAttachment(String relativePath) {
     return File(p.join(vaultDir.path, relativePath));
-  }
-
-  /// Reads a note from a given file path.
-  Future<Note?> readNote(String filePath) async {
-    final file = File(filePath);
-    if (!await file.exists()) return null;
-    final content = await file.readAsString();
-    return parseMarkdownFile(content, filePath).note;
-  }
-
-  /// Permanently deletes a note file from disk.
-  Future<void> deleteNoteFile(String filePath) async {
-    final file = File(filePath);
-    if (await file.exists()) {
-      await file.delete();
-    }
   }
 }

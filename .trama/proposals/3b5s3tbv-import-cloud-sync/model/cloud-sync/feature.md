@@ -1,0 +1,3 @@
+# Cloud sync
+
+Sincronizzazione facoltativa di note e cartelle con un progetto cloud Supabase, con accesso tramite account Google. L'app funziona sempre sul dispositivo: ogni salvataggio o eliminazione definitiva di una nota entra in una coda locale, che viene inviata al cloud quando un utente è connesso. Una sincronizzazione completa invia la coda e le note mai sincronizzate, poi scarica note e cartelle del cloud applicando la regola "vince l'ultima modifica" per le note e "vince il cloud" per le cartelle. Un canale in tempo reale applica subito le modifiche fatte da altri dispositivi. Ogni utente vede sul cloud solo le proprie righe.

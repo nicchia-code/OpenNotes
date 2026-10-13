@@ -49,12 +49,12 @@ class RichTextEditingController extends TextEditingController {
     var offset = 0;
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
-      final match = RegExp(r'^( *)(#{1,3}) ').firstMatch(line);
+      final match = RegExp(r'^(#{1,3}) ').firstMatch(line);
       if (match == null) {
         cleanedLines.add(line);
       } else {
         final prefixLength = match.group(0)!.length;
-        lineStyles[i] = switch (match.group(2)!.length) {
+        lineStyles[i] = switch (match.group(1)!.length) {
           1 => BlockType.h1,
           2 => BlockType.h2,
           _ => BlockType.h3,
@@ -180,9 +180,11 @@ class RichTextEditingController extends TextEditingController {
       return;
     }
 
-    final survivingStyle = keepsStartLine
+    final endStyle = lineStyles[oldEndLine];
+    final survivingStyle =
+        keepsStartLine || endStyle == null || endStyle == BlockType.paragraph
         ? lineStyles[oldStartLine]
-        : (lineStyles[oldEndLine] ?? lineStyles[oldStartLine]);
+        : endStyle;
     if (survivingStyle != null) updated[oldStartLine] = survivingStyle;
     for (var line = oldStartLine + 1; line <= newEndLine; line++) {
       updated[line] = BlockType.paragraph;
@@ -200,48 +202,66 @@ class RichTextEditingController extends TextEditingController {
 
     final actualEndLine = math.min(endLine, lineStarts.length - 1);
     final prefixRegex = RegExp(
-      r'^(#+\s*|[•○●◦▪]\s*|[-*]\s*|\[[ xX]\]\s*|\d+\.\s*|>\s*|```\s*)',
+      r'^(\s*)(#{1,3}\s+|[•○●◦▪]\s+|[-*]\s+|\[[ xX]\]\s+|\d+\.\s+|>\s+|```\s?)',
     );
 
     String newText = fullText;
     int shift = 0;
+    final removed = <(int, int)>[];
 
     for (int i = startLine; i <= actualEndLine; i++) {
       final ls = lineStarts[i] + shift;
-      final le = (i + 1 < lineStarts.length)
-          ? lineStarts[i + 1] - 1 + shift
-          : newText.length;
       if (ls > newText.length) break;
-      final lineStr = newText.substring(ls, math.min(le, newText.length));
-      final match = prefixRegex.firstMatch(lineStr);
-      if (match != null) {
-        final matchLen = match.group(0)!.length;
-        newText = newText.replaceRange(ls, ls + matchLen, '');
+      // Every stacked symbol goes ("> 1. text" loses "> " and "1. "), not only the first.
+      while (true) {
+        final le = (i + 1 < lineStarts.length)
+            ? lineStarts[i + 1] - 1 + shift
+            : newText.length;
+        final lineStr = newText.substring(ls, math.min(le, newText.length));
+        final match = prefixRegex.firstMatch(lineStr);
+        if (match == null) break;
+        // The indentation (group 1) stays: only the symbol after it goes.
+        final start = ls + match.group(1)!.length;
+        final matchLen = match.group(2)!.length;
+        newText = newText.replaceRange(start, start + matchLen, '');
+        removed.add((start - shift, matchLen));
         shift -= matchLen;
 
         for (final s in spans) {
-          if (s.start >= ls + matchLen) {
+          if (s.start >= start + matchLen) {
             s.start -= matchLen;
             s.end -= matchLen;
-          } else if (s.end >= ls) {
+          } else if (s.end >= start) {
             s.end -= matchLen;
           }
         }
       }
     }
 
+    // Removing the symbols moves the offsets after them. The selection keeps
+    // its lines, so the caller can still act on every selected line.
+    int mapOffset(int offset) {
+      var removedBefore = 0;
+      for (final (from, len) in removed) {
+        if (offset >= from + len) {
+          removedBefore += len;
+        } else if (offset > from) {
+          removedBefore += offset - from;
+        }
+      }
+      return offset - removedBefore;
+    }
+
     if (newText != fullText) {
       final sel = selection;
-      final newCaret = math.max(
-        0,
-        math.min(
-          newText.length,
-          sel.isValid ? sel.start + shift : newText.length,
-        ),
-      );
       value = TextEditingValue(
         text: newText,
-        selection: TextSelection.collapsed(offset: newCaret),
+        selection: sel.isValid
+            ? TextSelection(
+                baseOffset: mapOffset(sel.baseOffset),
+                extentOffset: mapOffset(sel.extentOffset),
+              )
+            : TextSelection.collapsed(offset: newText.length),
       );
       _normalizeSpans();
     }
@@ -435,6 +455,33 @@ class RichTextEditingController extends TextEditingController {
         super.value = nextValue;
       }
     }
+
+    // Line types from a typed prefix: the prefix stays in the text. Only body
+    // lines react; heading lines keep their style and their typed sign.
+    const typedStyles = {BlockType.quote, BlockType.code, BlockType.numbered};
+    final lines = text.split('\n');
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final current = lineStyles[i];
+      if (current != null &&
+          current != BlockType.paragraph &&
+          !typedStyles.contains(current)) {
+        continue;
+      }
+      final detected = RegExp(r'^\s*> ').hasMatch(line)
+          ? BlockType.quote
+          : RegExp(r'^\s*```').hasMatch(line)
+          ? BlockType.code
+          : RegExp(r'^\s*\d+\.\s+').hasMatch(line)
+          ? BlockType.numbered
+          : null;
+      if (detected != null) {
+        lineStyles[i] = detected;
+      } else if (current != null && typedStyles.contains(current)) {
+        // The sign was deleted: the line is body text again.
+        lineStyles[i] = BlockType.paragraph;
+      }
+    }
   }
 
   /// Handles Enter key: auto-continues or exits bullet/checklist/numbered lists, breaks headings into body
@@ -451,16 +498,21 @@ class RichTextEditingController extends TextEditingController {
 
     final lineIdx = getLineIndexAtOffset(pos);
     final lineStyle = getLineStyle(lineIdx);
+    final isHeading =
+        lineStyle == BlockType.title ||
+        lineStyle == BlockType.h1 ||
+        lineStyle == BlockType.h2 ||
+        lineStyle == BlockType.h3;
 
     final checkMatch = RegExp(
       r'^(\s*)([○●]|(?:[-*•]\s*)?\[[ xX]\])\s*',
     ).firstMatch(currentLine);
     final bulletMatch = RegExp(
-      r'^(\s*)([•◦▪]\s*|-\s*|\*\s*)',
+      r'^(\s*)([•◦▪]|-|\*)\s+',
     ).firstMatch(currentLine);
-    final numMatch = RegExp(r'^(\s*)(\d+)\.\s*').firstMatch(currentLine);
+    final numMatch = RegExp(r'^(\s*)(\d+)\.\s+').firstMatch(currentLine);
 
-    if (checkMatch != null) {
+    if (checkMatch != null && !isHeading) {
       final prefix = checkMatch.group(0)!;
       final rest = currentLine.substring(prefix.length).trim();
       final indent = checkMatch.group(1) ?? '';
@@ -493,15 +545,23 @@ class RichTextEditingController extends TextEditingController {
           return true;
         }
       } else {
+        // A caret before the text splits the item right after its marker.
+        final splitAt = math.max(pos, lineStart + prefix.length);
         final nextCheck = '\n${indent}○ ';
-        final newText = fullText.replaceRange(pos, sel.end, nextCheck);
+        final newText = fullText.replaceRange(
+          splitAt,
+          math.max(sel.end, splitAt),
+          nextCheck,
+        );
         value = TextEditingValue(
           text: newText,
-          selection: TextSelection.collapsed(offset: pos + nextCheck.length),
+          selection: TextSelection.collapsed(
+            offset: splitAt + nextCheck.length,
+          ),
         );
         return true;
       }
-    } else if (bulletMatch != null) {
+    } else if (bulletMatch != null && !isHeading) {
       final prefix = bulletMatch.group(0)!;
       final rest = currentLine.substring(prefix.length).trim();
       final indent = bulletMatch.group(1) ?? '';
@@ -535,16 +595,24 @@ class RichTextEditingController extends TextEditingController {
           return true;
         }
       } else {
+        // A caret before the text splits the item right after its marker.
+        final splitAt = math.max(pos, lineStart + prefix.length);
         final bulletChar = getBulletForIndent(indent.length);
         final nextBullet = '\n$indent$bulletChar ';
-        final newText = fullText.replaceRange(pos, sel.end, nextBullet);
+        final newText = fullText.replaceRange(
+          splitAt,
+          math.max(sel.end, splitAt),
+          nextBullet,
+        );
         value = TextEditingValue(
           text: newText,
-          selection: TextSelection.collapsed(offset: pos + nextBullet.length),
+          selection: TextSelection.collapsed(
+            offset: splitAt + nextBullet.length,
+          ),
         );
         return true;
       }
-    } else if (numMatch != null) {
+    } else if (numMatch != null && !isHeading) {
       final prefix = numMatch.group(0)!;
       final numVal = int.tryParse(numMatch.group(2) ?? '1') ?? 1;
       final rest = currentLine.substring(prefix.length).trim();
@@ -578,33 +646,40 @@ class RichTextEditingController extends TextEditingController {
           return true;
         }
       } else {
+        // A caret before the text splits the item right after its marker.
+        final splitAt = math.max(pos, lineStart + prefix.length);
         final nextNum = '\n$indent${numVal + 1}. ';
-        final newText = fullText.replaceRange(pos, sel.end, nextNum);
+        final newText = fullText.replaceRange(
+          splitAt,
+          math.max(sel.end, splitAt),
+          nextNum,
+        );
         value = TextEditingValue(
           text: newText,
-          selection: TextSelection.collapsed(offset: pos + nextNum.length),
+          selection: TextSelection.collapsed(
+            offset: splitAt + nextNum.length,
+          ),
         );
         return true;
       }
-    } else if (lineStyle == BlockType.title ||
-        lineStyle == BlockType.h1 ||
-        lineStyle == BlockType.h2 ||
-        lineStyle == BlockType.h3) {
+    } else if (isHeading) {
       // Pressing enter on a heading keeps its style with the text below.
       final oldLineStyles = Map<int, BlockType>.from(lineStyles);
-      final atLineStart =
-          pos == lineStart && sel.isCollapsed && currentLine.isNotEmpty;
+      final atLineStart = pos == lineStart && sel.isCollapsed;
       final newText = fullText.replaceRange(pos, sel.end, '\n');
       value = TextEditingValue(
         text: newText,
         selection: TextSelection.collapsed(offset: pos + 1),
       );
       if (atLineStart) {
+        // Text on the line moves down with the heading style; on an empty
+        // line the heading stays above and the cursor lands on a body line.
+        final styleMoves = currentLine.isNotEmpty;
         lineStyles = {
           for (final entry in oldLineStyles.entries)
-            if (entry.key >= lineIdx)
+            if (entry.key > lineIdx || (entry.key == lineIdx && styleMoves))
               entry.key + 1: entry.value
-            else
+            else if (entry.key < lineIdx)
               entry.key: entry.value,
           lineIdx: BlockType.paragraph,
         };
@@ -646,17 +721,27 @@ class RichTextEditingController extends TextEditingController {
 
     final selectedRegion = fullText.substring(lineStart, lineEnd);
     final lines = selectedRegion.split('\n');
+    final firstLineIdx = getLineIndexInString(fullText, lineStart);
     final transformedLines = <String>[];
     int deltaTotal = 0;
     int firstLineDelta = 0;
 
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
-      final bulletMatch = RegExp(r'^(\s*)([•◦▪]|\*|-)\s*').firstMatch(line);
+      // Headings have no Tab action: keep the line as it is.
+      final lineStyle = getLineStyle(firstLineIdx + i);
+      if (lineStyle == BlockType.title ||
+          lineStyle == BlockType.h1 ||
+          lineStyle == BlockType.h2 ||
+          lineStyle == BlockType.h3) {
+        transformedLines.add(line);
+        continue;
+      }
+      final bulletMatch = RegExp(r'^(\s*)([•◦▪]|\*|-)\s+').firstMatch(line);
       final checkMatch = RegExp(
         r'^(\s*)([○●]|(?:[-*•]\s*)?\[[ xX]\])\s*',
       ).firstMatch(line);
-      final numMatch = RegExp(r'^(\s*)(\d+)\.\s*').firstMatch(line);
+      final numMatch = RegExp(r'^(\s*)(\d+)\.\s+').firstMatch(line);
 
       String newLine = line;
       if (bulletMatch != null) {
@@ -770,6 +855,8 @@ class RichTextEditingController extends TextEditingController {
 
   /// Handles Backspace key on bullet / list items:
   /// - If cursor is right after prefix on empty sub-bullet ('  ◦ '): outdents to '• '
+  /// - If cursor is right after the symbol of an indented item, before its space: outdents one level
+  /// - If cursor is right after the symbol of a non-indented item, before its space: removes symbol and space
   /// - If cursor is right after prefix on empty bullet ('• '): exits to empty paragraph
   /// - If cursor is at start of text ('  ◦ Text'): outdents line to '• Text'
   /// - If cursor is at start of text on level 0 ('• Text'): converts to 'Text'
@@ -793,7 +880,10 @@ class RichTextEditingController extends TextEditingController {
       final indent = checkMatch.group(1) ?? '';
       final rest = currentLine.substring(prefix.length);
 
-      if (pos == prefixEnd) {
+      // On indented items the caret right after the circle also outdents
+      final afterMarker =
+          pos == lineStart + indent.length + checkMatch.group(2)!.length;
+      if (pos == prefixEnd || afterMarker) {
         if (indent.length >= 2) {
           final newIndent = indent.substring(2);
           final replacement = '$newIndent○ $rest';
@@ -802,7 +892,9 @@ class RichTextEditingController extends TextEditingController {
             nextNewline,
             replacement,
           );
-          final newCaret = lineStart + newIndent.length + 2;
+          final newCaret = afterMarker
+              ? lineStart + newIndent.length + 1
+              : lineStart + newIndent.length + 2;
           value = TextEditingValue(
             text: newText,
             selection: TextSelection.collapsed(offset: newCaret),
@@ -820,7 +912,7 @@ class RichTextEditingController extends TextEditingController {
     }
 
     final bulletMatch = RegExp(
-      r'^(\s*)([•◦▪]|\*|-)\s*',
+      r'^(\s*)([•◦▪]|\*|-)\s+',
     ).firstMatch(currentLine);
     if (bulletMatch != null) {
       final prefix = bulletMatch.group(0)!;
@@ -828,8 +920,10 @@ class RichTextEditingController extends TextEditingController {
       final indent = bulletMatch.group(1) ?? '';
       final rest = currentLine.substring(prefix.length);
 
-      // Only intercept if cursor is at the prefix boundary (after the bullet + space)
-      if (pos == prefixEnd) {
+      // Intercept after the bullet + space, or on an indented item after the bullet
+      final afterMarker =
+          pos == lineStart + indent.length + bulletMatch.group(2)!.length;
+      if (pos == prefixEnd || afterMarker) {
         if (indent.length >= 2) {
           // Outdent 1 level
           final newIndent = indent.substring(2);
@@ -840,7 +934,9 @@ class RichTextEditingController extends TextEditingController {
             nextNewline,
             replacement,
           );
-          final newCaret = lineStart + newIndent.length + 2;
+          final newCaret = afterMarker
+              ? lineStart + newIndent.length + 1
+              : lineStart + newIndent.length + 2;
           value = TextEditingValue(
             text: newText,
             selection: TextSelection.collapsed(offset: newCaret),
@@ -861,8 +957,10 @@ class RichTextEditingController extends TextEditingController {
     return false;
   }
 
-  /// Applies a line prefix (e.g., '• ', '○ ', '> ') across current selection or line
-  void applyLinePrefix(String prefix) {
+  /// Applies a line prefix (e.g., '• ', '○ ', '> ') across current selection or line.
+  /// With [bulletByIndent], each line gets the bullet of its own indent level
+  /// ('•', '◦', '▪') and [prefix] is not used.
+  void applyLinePrefix(String prefix, {bool bulletByIndent = false}) {
     final sel = selection;
     final fullText = text;
     final startPos = sel.isValid
@@ -878,20 +976,25 @@ class RichTextEditingController extends TextEditingController {
     final lines = selectedRegion.split('\n');
 
     final prefixRegex = RegExp(
-      r'^(#+\s*|[•○●◦▪]\s*|[-*]\s*|\[[ xX]\]\s*|\d+\.\s*|>\s*)',
+      r'^(```\s?|#{1,3}\s+|[•○●◦▪]\s+|[-*]\s+|\[[ xX]\]\s+|\d+\.\s+|>\s+)',
     );
     final transformedLines = <String>[];
 
     for (final line in lines) {
-      final withoutPrefix = line.replaceFirst(prefixRegex, '');
-      if (prefix.isEmpty) {
-        transformedLines.add(withoutPrefix);
+      // The symbol goes after the indentation, which stays as it is.
+      final indent = RegExp(r'^\s*').stringMatch(line)!;
+      final body = line.substring(indent.length);
+      var withoutPrefix = body;
+      while (prefixRegex.hasMatch(withoutPrefix)) {
+        withoutPrefix = withoutPrefix.replaceFirst(prefixRegex, '');
+      }
+      final linePrefix = bulletByIndent
+          ? '${getBulletForIndent(indent.length)} '
+          : prefix;
+      if (linePrefix.isEmpty || body.startsWith(linePrefix)) {
+        transformedLines.add('$indent$withoutPrefix');
       } else {
-        if (line.startsWith(prefix)) {
-          transformedLines.add(withoutPrefix);
-        } else {
-          transformedLines.add('$prefix$withoutPrefix');
-        }
+        transformedLines.add('$indent$linePrefix$withoutPrefix');
       }
     }
 
@@ -906,6 +1009,9 @@ class RichTextEditingController extends TextEditingController {
       }
     }
 
+    // The spans were moved above, so the change listener must not move them
+    // again: marking the new text as seen makes it skip the change.
+    _previousText = newText;
     value = TextEditingValue(
       text: newText,
       selection: TextSelection(
@@ -913,6 +1019,9 @@ class RichTextEditingController extends TextEditingController {
         extentOffset: lineStart + newRegion.length,
       ),
     );
+    _previousSelection = selection;
+    _normalizeFormatting();
+    _convertMarkdownShortcuts();
     notifyListeners();
   }
 
@@ -968,7 +1077,12 @@ class RichTextEditingController extends TextEditingController {
       );
       notifyListeners();
     } else {
+      final cursorLine = getLineIndexInString(fullText, pos);
+      // The button acts on the cursor line only, the other selected lines stay as they are.
+      value = value.copyWith(selection: TextSelection.collapsed(offset: pos));
       applyLinePrefix('○ ');
+      // The checklist line is body text: heading styles do not apply to it.
+      setLineStyle(cursorLine, BlockType.paragraph);
     }
   }
 
@@ -998,7 +1112,8 @@ class RichTextEditingController extends TextEditingController {
 
     if (matchUnchecked != null) {
       final prefixLen = matchUnchecked.group(0)!.length;
-      if (charOffset <= lineStart + prefixLen + 1) {
+      final circleAt = lineStart + matchUnchecked.group(1)!.length;
+      if (charOffset >= circleAt && charOffset <= circleAt + 1) {
         _lastToggleTime = now;
         final indent = matchUnchecked.group(1) ?? '';
         final rest = line.substring(prefixLen);
@@ -1015,7 +1130,8 @@ class RichTextEditingController extends TextEditingController {
       }
     } else if (matchChecked != null) {
       final prefixLen = matchChecked.group(0)!.length;
-      if (charOffset <= lineStart + prefixLen + 1) {
+      final circleAt = lineStart + matchChecked.group(1)!.length;
+      if (charOffset >= circleAt && charOffset <= circleAt + 1) {
         _lastToggleTime = now;
         final indent = matchChecked.group(1) ?? '';
         final rest = line.substring(prefixLen);
@@ -1258,7 +1374,7 @@ class RichTextEditingController extends TextEditingController {
     }
 
     // Add tag boundaries so #tag is isolated and styled as an Apple tag chip
-    final tagRegex = RegExp(r'(?<=^|[\s\(\[\{])#([a-zA-Z0-9_\-]+)');
+    final tagRegex = RegExp(r'(?<=^|[\s\(\[\{])#(' + Note.tagNameChar + r'+)', unicode: true);
     for (final m in tagRegex.allMatches(rawText)) {
       boundaries.add(m.start);
       boundaries.add(m.end);
@@ -1292,12 +1408,9 @@ class RichTextEditingController extends TextEditingController {
 
       final lineStyle = getLineStyle(lineIdx);
       final bool isTitle = lineStyle == BlockType.title;
-      final bool isH1 =
-          lineStyle == BlockType.h1 || trimmedLine.startsWith('# ');
-      final bool isH2 =
-          lineStyle == BlockType.h2 || trimmedLine.startsWith('## ');
-      final bool isH3 =
-          lineStyle == BlockType.h3 || trimmedLine.startsWith('### ');
+      final bool isH1 = lineStyle == BlockType.h1 || lineStr.startsWith('# ');
+      final bool isH2 = lineStyle == BlockType.h2 || lineStr.startsWith('## ');
+      final bool isH3 = lineStyle == BlockType.h3 || lineStr.startsWith('### ');
 
       final bool isCircleUnchecked = trimmedLine.startsWith('○');
       final bool isCircleChecked = trimmedLine.startsWith('●');
@@ -1426,7 +1539,7 @@ class RichTextEditingController extends TextEditingController {
         );
       }
 
-      final bool isTag = RegExp(r'^#([a-zA-Z0-9_\-]+)$').hasMatch(segText);
+      final bool isTag = RegExp(r'^#(' + Note.tagNameChar + r'+)$', unicode: true).hasMatch(segText);
       if (isTag && !isCode) {
         final tagColor = isDark
             ? const Color(0xFFEBA625)

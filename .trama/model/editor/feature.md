@@ -1,0 +1,3 @@
+# Editor
+
+La modifica del contenuto di una nota. Il contenuto è un documento fatto di sezioni di testo ricco, tabelle e immagini (foto o disegni a mano libera). Ogni riga di testo ha un tipo (corpo, titolo, intestazione, voce puntata, voce numerata, voce di checklist, citazione, monospazio) e i caratteri possono essere in grassetto, corsivo, sottolineato o barrato, senza simboli Markdown visibili. Le scorciatoie Markdown digitate trasformano le righe, durante la scrittura dei tag compaiono dei suggerimenti e ogni modifica viene salvata da sola dopo una breve attesa. Una nota protetta e non ancora sbloccata mostra un segnaposto al posto del contenuto.

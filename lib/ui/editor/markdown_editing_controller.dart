@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/apple_theme.dart';
+import '../../core/models/note_model.dart';
 
 /// Custom TextEditingController that renders inline Markdown (bold, italic, #tag, code)
 /// live on the screen without needing a separate preview mode.
@@ -94,8 +95,9 @@ class MarkdownEditingController extends TextEditingController {
       r'|((?<!\*)\*[^\s\*].*?[^\s\*]\*(?!\*)|(?<!\*)\*[^\s\*]\*(?!\*))'
       r'|(~~[^\s~].*?[^\s~]~~|~~[^\s~]~~)'
       r'|(`[^`\r\n]+`)'
-      r'|((?<=^|\s)#[a-zA-Z0-9_\-]+)'
+      r'|((?<=^|\s)#(' + Note.tagNameChar + r'+))'
       r'|(https?:\/\/[^\s]+)',
+      unicode: true,
     );
 
     final delimiterColor = effectiveBase.color?.withOpacity(0.35) ?? Colors.grey.withOpacity(0.35);

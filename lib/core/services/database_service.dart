@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -39,6 +38,7 @@ class DatabaseService {
     _db = await openDatabase(
       dbPath,
       version: 1,
+      singleInstance: !inMemory, // in-memory tests must not share one open database
       onCreate: (db, version) async {
         // Folders table
         await db.execute('''
@@ -121,6 +121,18 @@ class DatabaseService {
     return Note.fromMap(results.first);
   }
 
+  /// Notes still recorded as written to [filePath], other than [exceptNoteId], newest first.
+  Future<List<Note>> getNotesWrittenTo(String filePath, {String? exceptNoteId}) async {
+    final results = await db.query(
+      'notes',
+      where: exceptNoteId == null ? 'file_path = ?' : 'file_path = ? AND id != ?',
+      whereArgs: [filePath, ?exceptNoteId],
+    );
+    final notes = results.map(Note.fromMap).toList();
+    notes.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return notes;
+  }
+
   Future<List<Note>> getNotes({
     String? folderId,
     String? tag,
@@ -152,64 +164,51 @@ class DatabaseService {
       }
     }
 
-    for (final cleanTag in targetTags) {
-      whereClauses.add('(LOWER(tags) LIKE ? OR LOWER(content) LIKE ?)');
-      whereArgs.add('%"$cleanTag"%');
-      whereArgs.add('%#$cleanTag%');
-    }
-
-    if (searchQuery != null && searchQuery.trim().isNotEmpty) {
-      final q = '%${searchQuery.trim().toLowerCase()}%';
-      whereClauses.add('(LOWER(title) LIKE ? OR LOWER(content) LIKE ?)');
-      whereArgs.add(q);
-      whereArgs.add(q);
-    }
+    // Literal substring match, case-folded in Dart (SQLite LOWER/LIKE treat
+    // `%`/`_` as wildcards and do not fold accented capitals). Filtered after
+    // the query; ponytail: whole table loaded, push back to SQL if archives grow large.
+    final q = searchQuery?.trim().toLowerCase() ?? '';
 
     final where = whereClauses.isEmpty ? null : whereClauses.join(' AND ');
 
-    // Apple Notes sorts by pinned first (descending), then updated_at (descending)
+    // Pinned first, then updated_at descending, compared as instants in Dart: stored dates
+    // mix local times (no zone) and cloud UTC ones, so SQL text order is wrong.
     final results = await db.query(
       'notes',
       where: where,
       whereArgs: whereArgs,
-      orderBy: 'is_pinned DESC, updated_at DESC',
     );
 
-    return results.map((m) => Note.fromMap(m)).toList();
+    final matching = results.where((m) {
+      if (targetTags.isNotEmpty) {
+        final noteTags = Note.fromMap(m).storedTags;
+        if (!targetTags.every(noteTags.contains)) return false;
+      }
+      if (q.isEmpty) return true;
+      final title = (m['title'] as String? ?? '').toLowerCase();
+      final content = (m['content'] as String? ?? '').toLowerCase();
+      return title.contains(q) || content.contains(q);
+    });
+    final notes = matching.map((m) => Note.fromMap(m)).toList();
+    notes.sort((a, b) {
+      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+      return b.updatedAt.compareTo(a.updatedAt);
+    });
+    return notes;
   }
 
-  Future<void> moveToTrash(String noteId) async {
-    await db.update(
-      'notes',
-      {
-        'is_deleted': 1,
-        'deleted_at': DateTime.now().toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
-      },
-      where: 'id = ?',
-      whereArgs: [noteId],
-    );
-  }
-
-  Future<void> restoreFromTrash(String noteId) async {
-    await db.update(
-      'notes',
-      {
-        'is_deleted': 0,
-        'deleted_at': null,
-        'updated_at': DateTime.now().toIso8601String(),
-      },
-      where: 'id = ?',
-      whereArgs: [noteId],
-    );
-  }
-
+  /// Removes the note row. A note this device had synced takes its queued saves with it: they are discarded
+  /// here, while the row still says the note was synced. A note never synced keeps its queued saves, which are sent.
   Future<void> permanentlyDeleteNote(String noteId) async {
+    final rows = await db.query('notes', columns: ['synced_at'], where: 'id = ?', whereArgs: [noteId], limit: 1);
+    if (rows.isNotEmpty && rows.single['synced_at'] != null) {
+      await db.delete(
+        'sync_queue',
+        where: 'entity_type = ? AND entity_id = ? AND action = ?',
+        whereArgs: ['note', noteId, 'upsert'],
+      );
+    }
     await db.delete('notes', where: 'id = ?', whereArgs: [noteId]);
-  }
-
-  Future<void> emptyTrash() async {
-    await db.delete('notes', where: 'is_deleted = 1');
   }
 
   // --- FOLDERS CRUD ---
@@ -217,6 +216,11 @@ class DatabaseService {
   Future<List<Folder>> getFolders() async {
     final results = await db.query('folders', orderBy: 'is_system DESC, name ASC');
     return results.map((m) => Folder.fromMap(m)).toList();
+  }
+
+  Future<bool> folderExists(String folderId) async {
+    final results = await db.query('folders', columns: ['id'], where: 'id = ?', whereArgs: [folderId], limit: 1);
+    return results.isNotEmpty;
   }
 
   Future<void> upsertFolder(Folder folder) async {
@@ -263,39 +267,11 @@ class DatabaseService {
   }
 
   Future<List<Tag>> getAllTags() async {
-    final results = await db.query('notes', columns: ['tags', 'content'], where: 'is_deleted = 0');
+    final results = await db.query('notes', where: 'is_deleted = 0');
     final tagCountMap = <String, int>{};
 
-    for (final row in results) {
-      final rawTags = row['tags'];
-      final rawContent = row['content'] as String? ?? '';
-      final noteTags = <String>{};
-
-      if (rawTags is String) {
-        try {
-          final decoded = jsonDecode(rawTags);
-          if (decoded is List) {
-            for (final t in decoded) {
-              final clean = t.toString().replaceAll('#', '').trim().toLowerCase();
-              if (clean.isNotEmpty) noteTags.add(clean);
-            }
-          }
-        } catch (_) {}
-      } else if (rawTags is List) {
-        for (final t in rawTags) {
-          final clean = t.toString().replaceAll('#', '').trim().toLowerCase();
-          if (clean.isNotEmpty) noteTags.add(clean);
-        }
-      }
-
-      if (rawContent.isNotEmpty) {
-        for (final t in Note.extractTagsFromContent(rawContent)) {
-          final clean = t.replaceAll('#', '').trim().toLowerCase();
-          if (clean.isNotEmpty) noteTags.add(clean);
-        }
-      }
-
-      for (final cleanTag in noteTags) {
+    for (final note in results.map(Note.fromMap)) {
+      for (final cleanTag in note.storedTags) {
         tagCountMap[cleanTag] = (tagCountMap[cleanTag] ?? 0) + 1;
       }
     }
@@ -330,5 +306,69 @@ class DatabaseService {
 
   Future<void> removeSyncAction(int id) async {
     await db.delete('sync_queue', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> removeSyncActionsFor(String entityType, String entityId, {String? action}) async {
+    await db.delete(
+      'sync_queue',
+      where: action == null
+          ? 'entity_type = ? AND entity_id = ?'
+          : 'entity_type = ? AND entity_id = ? AND action = ?',
+      whereArgs: [entityType, entityId, ?action],
+    );
+  }
+
+  /// When the queued delete of this entity was made; null when no delete waits to be sent.
+  Future<DateTime?> pendingDeleteQueuedAt(String entityType, String entityId) async {
+    final rows = await db.query(
+      'sync_queue',
+      columns: ['created_at'],
+      where: 'entity_type = ? AND entity_id = ? AND action = ?',
+      whereArgs: [entityType, entityId, 'delete'],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return DateTime.parse(rows.single['created_at'] as String);
+  }
+
+  /// When the queued delete of this entity was made; null when no delete waits to be sent.
+  Future<DateTime?> getPendingSyncDeleteTime(String entityType, String entityId) async {
+    final rows = await db.query(
+      'sync_queue',
+      columns: ['created_at'],
+      where: 'entity_type = ? AND entity_id = ? AND action = ?',
+      whereArgs: [entityType, entityId, 'delete'],
+      orderBy: 'id ASC',
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return DateTime.parse(rows.first['created_at'] as String);
+  }
+
+  /// Removes the queued deletes of this entity; other queued changes stay.
+  Future<void> removePendingSyncDeletes(String entityType, String entityId) async {
+    await db.delete(
+      'sync_queue',
+      where: 'entity_type = ? AND entity_id = ? AND action = ?',
+      whereArgs: [entityType, entityId, 'delete'],
+    );
+  }
+
+  /// Whether a queued change of this entity waits to be sent; any action when [action] is null.
+  Future<bool> hasPendingSyncAction({
+    required String entityType,
+    required String entityId,
+    String? action,
+  }) async {
+    final rows = await db.query(
+      'sync_queue',
+      columns: ['id'],
+      where: action == null
+          ? 'entity_type = ? AND entity_id = ?'
+          : 'entity_type = ? AND entity_id = ? AND action = ?',
+      whereArgs: [entityType, entityId, ?action],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
   }
 }

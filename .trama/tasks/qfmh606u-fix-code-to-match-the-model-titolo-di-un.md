@@ -1,0 +1,30 @@
+---
+column: done
+technical: false
+refs:
+  - text-line/Title
+drift: 90f9codc
+proposal: null
+agent: false
+created: 2026-10-12T08:43:57.265Z
+finished: 2026-10-12T08:45:42.274Z
+---
+# Fix code to match the Model: Titolo di una nota in formato precedente: una prima riga con elenco o casella non lo riceve
+
+## What happens
+
+Quando si apre una nota in formato precedente, il titolo va alla prima riga con testo solo se questa è testo normale, un «# », un numerato, una citazione o un monospazio. Se la prima riga è un elenco puntato, un elenco con trattino o asterisco, o una casella da fare o fatta, nessuna riga della nota diventa titolo: la riga resta di corpo.
+
+## What should happen
+
+Il Model dice che la prima riga significativa di una nota in formato precedente riceve lo stile Titolo, senza eccezioni per il tipo di riga. Le righe «## » e «### » restano intestazioni.
+
+## Chosen option
+
+**Ogni prima riga con testo diventa titolo**
+
+La prima riga con testo prende lo stile Titolo anche se è un elenco, una casella, una citazione o un monospazio: il simbolo resta visibile e il testo è in grande. Le righe «# » restano titolo come ora, le «## » e «### » restano intestazioni. Costo: un elenco come primo elemento di una nota vecchia appare come titolo, cosa che può sembrare strana.
+
+## Where in the code
+
+_parseContentToBlocks, ramo di caricamento del formato precedente in notion_document_editor.dart

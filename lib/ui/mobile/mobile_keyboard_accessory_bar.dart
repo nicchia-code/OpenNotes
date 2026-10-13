@@ -9,6 +9,7 @@ class MobileKeyboardAccessoryBar extends StatelessWidget {
   final VoidCallback? onTable;
   final VoidCallback? onDrawing;
   final VoidCallback? onPhoto;
+  final VoidCallback? onBlockMenu;
   final ValueChanged<BlockType>? onSelectBlockType;
   final VoidCallback? onBold;
   final VoidCallback? onItalic;
@@ -21,6 +22,7 @@ class MobileKeyboardAccessoryBar extends StatelessWidget {
     this.onTable,
     this.onDrawing,
     this.onPhoto,
+    this.onBlockMenu,
     this.onSelectBlockType,
     this.onBold,
     this.onItalic,
@@ -132,6 +134,48 @@ class MobileKeyboardAccessoryBar extends StatelessWidget {
               onSelectBlockType?.call(BlockType.numbered);
             },
           ),
+          CupertinoActionSheetAction(
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.checkmark_circle, size: 20),
+                SizedBox(width: 8),
+                Text('Checklist'),
+              ],
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              onSelectBlockType?.call(BlockType.checklist);
+            },
+          ),
+          CupertinoActionSheetAction(
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.quote_bubble, size: 20),
+                SizedBox(width: 8),
+                Text('Citazione'),
+              ],
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              onSelectBlockType?.call(BlockType.quote);
+            },
+          ),
+          CupertinoActionSheetAction(
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(CupertinoIcons.chevron_left_slash_chevron_right, size: 20),
+                SizedBox(width: 8),
+                Text('Monospazio'),
+              ],
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              onSelectBlockType?.call(BlockType.code);
+            },
+          ),
         ],
         cancelButton: CupertinoActionSheetAction(
           isDefaultAction: true,
@@ -184,6 +228,14 @@ class MobileKeyboardAccessoryBar extends StatelessWidget {
                 letterSpacing: -0.5,
               ),
             ),
+          ),
+
+          // Block menu button
+          _buildItem(
+            icon: CupertinoIcons.plus_square,
+            tooltip: 'Menu blocchi',
+            color: iconColor,
+            onTap: onBlockMenu,
           ),
 
           // Table button

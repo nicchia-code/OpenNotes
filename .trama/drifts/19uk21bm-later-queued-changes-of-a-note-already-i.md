@@ -1,0 +1,41 @@
+---
+status: resolved
+resolution: fix-code
+refs:
+  - pending-change/Queued
+proposal: null
+task: ntiff8zj
+origin: null
+critical: true
+option: 1
+note: null
+resolvedBy: xiy2hxml
+created: 2026-10-12T14:33:56.747Z
+---
+# Later queued changes of a note already in the cloud are dropped by its own first send
+
+## What happens
+
+Quando una nota già presente nel cloud ha più modifiche in attesa, per esempio perché è stata cambiata più volte offline, alla sincronizzazione parte la prima e il cloud registra l'ora del suo invio. Le modifiche successive vengono confrontate con quella copia, scritta poco prima dallo stesso dispositivo, risultano più vecchie e vengono scartate senza avviso. Al download la versione della prima modifica sostituisce il testo più recente, che va perso. Lo stesso accade quando una nota modificata offline viene poi eliminata definitivamente: la modifica parte, il cloud risulta più recente dell'eliminazione, quindi l'eliminazione viene scartata e la nota ricompare. Anche una cartella rinominata e poi eliminata offline torna.
+
+## What should happen
+
+Il Requirement dice che vince l'ultimo che ha scritto, confrontando le date, e che un'eliminazione in coda viene scartata solo se il cloud è stato modificato dopo di essa, cioè da un altro dispositivo. La regola non dice se una modifica già inviata da questo stesso dispositivo nella stessa sincronizzazione conta come modifica del cloud. Leggendola alla lettera la risposta è sì, e così si perde l'ultima modifica: le modifiche in coda di una nota devono arrivare in ordine, e un'eliminazione fatta dopo una modifica deve restare eliminazione.
+
+## Fix options
+
+### Confrontare con la copia del cloud di prima della sincronizzazione
+
+Le date del cloud si leggono una volta, all'inizio della sincronizzazione, e ogni modifica o eliminazione in coda si confronta con quella copia. Le modifiche di una nota arrivano in ordine e vince l'ultima; un'eliminazione fatta dopo una modifica resta eliminazione. Costo: una lettura iniziale delle note in coda; una modifica fatta su un altro dispositivo durante la stessa sincronizzazione può essere sovrascritta. Il Requirement non cambia.
+
+### Ricordare la data del cloud vista all'ultima sincronizzazione
+
+Il dispositivo registra, per ogni nota, la data di modifica del cloud che ha visto l'ultima volta. Una modifica in coda viene scartata solo se il cloud ha una data diversa da quella ricordata, cioè se è cambiato da un altro dispositivo; le proprie modifiche non contano più. Costo: un campo in più nella copia locale delle note e una riscrittura della regola dei conflitti, da fare in una Proposal.
+
+### Tenere com'è e accettare la perdita
+
+Il confronto resta alla lettera. Costo: una nota modificata più volte offline arriva al cloud solo con la prima modifica, l'ultima va persa senza avviso, e un'eliminazione fatta dopo una modifica fa tornare la nota. Nessun lavoro nel codice, ma il comportamento resta quello descritto.
+
+## Where in the code
+
+lib/core/services/sync_service.dart: syncNow, ramo delle note in coda (confronto con updated_at del cloud); applyRemoteNote, che sostituisce la copia locale più vecchia del cloud

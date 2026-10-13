@@ -75,8 +75,8 @@ class Folder {
       'parent_id': parentId,
       'icon': icon,
       'is_system': isSystem,
-      'created_at': createdAt.toIso8601String(),
-      'updated_at': updatedAt.toIso8601String(),
+      'created_at': createdAt.toUtc().toIso8601String(),
+      'updated_at': updatedAt.toUtc().toIso8601String(),
     };
   }
 
@@ -98,7 +98,6 @@ class Folder {
 
   // System folder IDs constants
   static const String allNotesId = 'system_all';
-  static const String quickNotesId = 'system_quick_notes';
   static const String defaultNotesId = 'notes';
   static const String trashId = 'system_trash';
 }

@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/folder_model.dart';
 import '../../core/models/note_model.dart';
-import '../../core/services/security_service.dart';
 import '../../core/state/notes_provider.dart';
+import '../../core/services/security_service.dart';
 import '../notes_list/note_card.dart';
+import '../notes_list/note_actions.dart';
 import '../security/lock_note_dialog.dart';
 import '../theme/apple_theme.dart';
 
@@ -27,12 +28,30 @@ class MobileNotesListScreen extends StatefulWidget {
 }
 
 class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
-  final TextEditingController _searchController = TextEditingController();
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    // The list is a new route each time it opens: show the query still filtering it.
+    _searchController = TextEditingController(
+      text: context.read<NotesProvider>().searchQuery,
+    );
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  // The provider drops the query when a note is created: clear the field too.
+  void _syncSearchField(String query) {
+    if (query.isEmpty && _searchController.text.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _searchController.clear();
+      });
+    }
   }
 
   String _getTitle(NotesProvider provider) {
@@ -44,109 +63,28 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
     if (provider.selectedFolderId == Folder.defaultNotesId) return 'Note';
 
     try {
-      final folder = provider.folders.firstWhere((f) => f.id == provider.selectedFolderId);
+      final folder = provider.folders.firstWhere(
+        (f) => f.id == provider.selectedFolderId,
+      );
       return folder.name;
     } catch (_) {
       return 'Note';
     }
   }
 
-  void _showNoteContextMenu(BuildContext context, Note note, NotesProvider provider) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    showCupertinoModalPopup(
-      context: context,
-      builder: (ctx) => CupertinoActionSheet(
-        title: Text(
-          note.title.isEmpty ? 'Nuova nota' : note.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        actions: [
-          // Pin / Unpin
-          CupertinoActionSheetAction(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  note.isPinned ? CupertinoIcons.pin_slash : CupertinoIcons.pin,
-                  color: isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(note.isPinned ? 'Rimuovi da fissate' : 'Fissa nota'),
-              ],
-            ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              provider.togglePin(note.id);
-            },
-          ),
-
-          // Lock / Unlock
-          CupertinoActionSheetAction(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  note.isLocked ? CupertinoIcons.lock_open : CupertinoIcons.lock,
-                  color: isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(note.isLocked ? 'Rimuovi protezione' : 'Proteggi nota'),
-              ],
-            ),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final security = context.read<SecurityService>();
-              if (note.isLocked) {
-                final unlocked = await LockNoteDialog.showUnlockDialog(context, security);
-                if (unlocked) {
-                  await provider.toggleLock(note.id);
-                }
-              } else {
-                if (!security.hasMasterPin) {
-                  final setPin = await LockNoteDialog.showSetPinDialog(context, security);
-                  if (!setPin) return;
-                }
-                await provider.toggleLock(note.id);
-              }
-            },
-          ),
-
-          // Delete / Restore
-          CupertinoActionSheetAction(
-            isDestructiveAction: !provider.isTrashSelected,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  provider.isTrashSelected ? CupertinoIcons.arrow_uturn_left : CupertinoIcons.trash,
-                  color: provider.isTrashSelected ? CupertinoColors.activeBlue : CupertinoColors.destructiveRed,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(provider.isTrashSelected ? 'Ripristina nota' : 'Elimina nota'),
-              ],
-            ),
-            onPressed: () {
-              Navigator.pop(ctx);
-              if (provider.isTrashSelected) {
-                provider.restoreFromTrash(note.id);
-              } else {
-                provider.moveToTrash(note.id);
-              }
-            },
-          ),
-        ],
-        cancelButton: CupertinoActionSheetAction(
-          isDefaultAction: true,
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Annulla'),
-        ),
-      ),
+  void _showNoteContextMenu(
+    BuildContext context,
+    Note note,
+    NotesProvider provider,
+  ) {
+    NoteActions.showMobile(
+      context,
+      note,
+      onOpenAfterDuplicate: (opened) {
+        provider.selectNote(opened.id);
+        widget.onNoteSelected?.call(opened);
+      },
+      fromList: true,
     );
   }
 
@@ -164,25 +102,36 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
                 Navigator.pop(ctx);
                 final confirm = await showCupertinoDialog<bool>(
                   context: context,
-                  builder: (dCtx) => CupertinoAlertDialog(
+                  builder: (dialogContext) => CupertinoAlertDialog(
                     title: const Text('Svuotare il cestino?'),
-                    content: const Text('Tutte le note eliminate verranno rimosse permanentemente.'),
+                    content: const Text(
+                      'Tutte le note eliminate verranno rimosse permanentemente.',
+                    ),
                     actions: [
                       CupertinoDialogAction(
+                        onPressed: () => Navigator.pop(dialogContext, false),
                         child: const Text('Annulla'),
-                        onPressed: () => Navigator.pop(dCtx, false),
                       ),
                       CupertinoDialogAction(
                         isDestructiveAction: true,
-                        onPressed: () => Navigator.pop(dCtx, true),
+                        onPressed: () => Navigator.pop(dialogContext, true),
                         child: const Text('Svuota'),
                       ),
                     ],
                   ),
                 );
-                if (confirm == true) {
-                  await provider.emptyTrash();
+                if (confirm != true || !context.mounted) return;
+                final hasProtected = await provider.trashHasProtectedNote();
+                if (!context.mounted) return;
+                if (hasProtected) {
+                  final security = context.read<SecurityService>();
+                  final unlocked = await LockNoteDialog.showUnlockDialog(
+                    context,
+                    security,
+                  );
+                  if (!unlocked || !context.mounted) return;
                 }
+                await provider.emptyTrash();
               },
             ),
         ],
@@ -198,12 +147,17 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<NotesProvider>();
+    _syncSearchField(provider.searchQuery);
     final notes = provider.notes;
     final tags = provider.tags;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor = isDark ? AppleTheme.darkSidebar : const Color(0xFFF2F2F7);
-    final accentColor = isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight;
-    final secondaryTextColor = isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary;
+    final accentColor = isDark
+        ? AppleTheme.accentYellow
+        : AppleTheme.accentAmberLight;
+    final secondaryTextColor = isDark
+        ? AppleTheme.darkTextSecondary
+        : AppleTheme.lightTextSecondary;
 
     final pinnedNotes = notes.where((n) => n.isPinned).toList();
     final unpinnedNotes = notes.where((n) => !n.isPinned).toList();
@@ -224,7 +178,11 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
         ),
         trailing: CupertinoButton(
           padding: EdgeInsets.zero,
-          child: Icon(CupertinoIcons.ellipsis_circle, color: accentColor, size: 22),
+          child: Icon(
+            CupertinoIcons.ellipsis_circle,
+            color: accentColor,
+            size: 22,
+          ),
           onPressed: () => _showMoreMenu(context, provider),
         ),
       ),
@@ -238,7 +196,9 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
                 controller: _searchController,
                 placeholder: 'Cerca note...',
                 style: TextStyle(
-                  color: isDark ? AppleTheme.darkTextPrimary : AppleTheme.lightTextPrimary,
+                  color: isDark
+                      ? AppleTheme.darkTextPrimary
+                      : AppleTheme.lightTextPrimary,
                   fontSize: 14,
                 ),
                 onChanged: (value) => provider.setSearchQuery(value),
@@ -263,11 +223,18 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
                         onTap: () => provider.toggleTag(tag.name),
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 150),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? accentColor.withValues(alpha: isDark ? 0.3 : 0.2)
-                                : (isDark ? const Color(0xFF2C2C2E) : const Color(0xFFE5E5EA)),
+                                ? accentColor.withValues(
+                                    alpha: isDark ? 0.3 : 0.2,
+                                  )
+                                : (isDark
+                                      ? const Color(0xFF2C2C2E)
+                                      : const Color(0xFFE5E5EA)),
                             borderRadius: BorderRadius.circular(14),
                             border: isSelected
                                 ? Border.all(color: accentColor, width: 1.2)
@@ -280,10 +247,14 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
                                 '#${tag.name}',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
                                   color: isSelected
                                       ? accentColor
-                                      : (isDark ? AppleTheme.darkTextPrimary : AppleTheme.lightTextPrimary),
+                                      : (isDark
+                                            ? AppleTheme.darkTextPrimary
+                                            : AppleTheme.lightTextPrimary),
                                 ),
                               ),
                               const SizedBox(width: 4),
@@ -319,7 +290,9 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            provider.searchQuery.isNotEmpty ? 'Nessun risultato' : 'Nessuna nota',
+                            provider.searchQuery.isNotEmpty
+                                ? 'Nessun risultato'
+                                : 'Nessuna nota',
                             style: TextStyle(
                               fontSize: 16,
                               color: secondaryTextColor,
@@ -335,14 +308,18 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
                         // Pinned notes section
                         if (pinnedNotes.isNotEmpty) ...[
                           _buildSectionHeader('FISSATE', secondaryTextColor),
-                          ...pinnedNotes.map((note) => _buildDismissibleNoteCard(note, provider)),
+                          ...pinnedNotes.map(
+                            (note) => _buildDismissibleNoteCard(note, provider),
+                          ),
                         ],
 
                         // Regular notes section
                         if (unpinnedNotes.isNotEmpty) ...[
                           if (pinnedNotes.isNotEmpty)
                             _buildSectionHeader('NOTE', secondaryTextColor),
-                          ...unpinnedNotes.map((note) => _buildDismissibleNoteCard(note, provider)),
+                          ...unpinnedNotes.map(
+                            (note) => _buildDismissibleNoteCard(note, provider),
+                          ),
                         ],
                       ],
                     ),
@@ -353,10 +330,14 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
               height: 52,
               padding: const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF9F9F9),
+                color: isDark
+                    ? const Color(0xFF1E1E1E)
+                    : const Color(0xFFF9F9F9),
                 border: Border(
                   top: BorderSide(
-                    color: isDark ? AppleTheme.darkDivider : AppleTheme.lightDivider,
+                    color: isDark
+                        ? AppleTheme.darkDivider
+                        : AppleTheme.lightDivider,
                     width: 0.6,
                   ),
                 ),
@@ -376,11 +357,18 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
                       ),
                     ),
                   ),
-                  CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    onPressed: widget.onNewNote,
-                    child: Icon(CupertinoIcons.square_pencil, color: accentColor, size: 24),
-                  ),
+                  if (provider.isTrashSelected)
+                    const SizedBox(width: 44) // keep the counter centred
+                  else
+                    CupertinoButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: widget.onNewNote,
+                      child: Icon(
+                        CupertinoIcons.square_pencil,
+                        color: accentColor,
+                        size: 24,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -408,13 +396,18 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
   Widget _buildDismissibleNoteCard(Note note, NotesProvider provider) {
     return Dismissible(
       key: ValueKey(note.id),
-      // Swipe right: Pin/Unpin, Swipe left: Delete/Trash
+      // Swipe right: Pin/Unpin; swipe left: Move to trash (not in trash)
+      direction: provider.isTrashSelected
+          ? DismissDirection.startToEnd
+          : DismissDirection.horizontal,
       background: Container(
         color: AppleTheme.accentYellow,
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.only(left: 20),
         child: Icon(
-          note.isPinned ? CupertinoIcons.pin_slash_fill : CupertinoIcons.pin_fill,
+          note.isPinned
+              ? CupertinoIcons.pin_slash_fill
+              : CupertinoIcons.pin_fill,
           color: Colors.white,
           size: 24,
         ),
@@ -423,8 +416,8 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
         color: CupertinoColors.destructiveRed,
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
-        child: Icon(
-          provider.isTrashSelected ? CupertinoIcons.trash_fill : CupertinoIcons.trash,
+        child: const Icon(
+          CupertinoIcons.trash,
           color: Colors.white,
           size: 24,
         ),
@@ -435,13 +428,20 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
           await provider.togglePin(note.id);
           return false; // don't remove from tree
         } else if (direction == DismissDirection.endToStart) {
-          // Delete / Move to trash
-          if (provider.isTrashSelected) {
-            await provider.permanentlyDeleteNote(note.id);
-          } else {
-            await provider.moveToTrash(note.id);
+          // Move to trash
+          if (!await provider.moveToTrash(note.id)) return false;
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Nota spostata nel cestino'),
+                action: SnackBarAction(
+                  label: 'Annulla',
+                  onPressed: () => provider.restoreFromTrash(note.id),
+                ),
+              ),
+            );
           }
-          return true; // remove row
+          return true;
         }
         return false;
       },

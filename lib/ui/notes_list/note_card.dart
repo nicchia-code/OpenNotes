@@ -12,6 +12,7 @@ class NoteCard extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
   final Function(String tag)? onTagTap;
+  final VoidCallback? onMenu;
 
   const NoteCard({
     super.key,
@@ -19,6 +20,7 @@ class NoteCard extends StatelessWidget {
     required this.isSelected,
     required this.onTap,
     this.onTagTap,
+    this.onMenu,
   });
 
   String _formatDate(DateTime date) {
@@ -51,7 +53,9 @@ class NoteCard extends StatelessWidget {
 
     final secondaryColor = isSelected
         ? (isDark ? const Color(0xFFD4A843) : const Color(0xFF8A6400))
-        : (isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary);
+        : (isDark
+              ? AppleTheme.darkTextSecondary
+              : AppleTheme.lightTextSecondary);
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2.5),
@@ -61,10 +65,12 @@ class NoteCard extends StatelessWidget {
         boxShadow: isSelected
             ? [
                 BoxShadow(
-                  color: AppleTheme.accentYellow.withOpacity(isDark ? 0.2 : 0.25),
+                  color: AppleTheme.accentYellow.withOpacity(
+                    isDark ? 0.2 : 0.25,
+                  ),
                   blurRadius: 4,
                   offset: const Offset(0, 1),
-                )
+                ),
               ]
             : null,
       ),
@@ -72,7 +78,9 @@ class NoteCard extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
-          hoverColor: isDark ? AppleTheme.darkCardHover : AppleTheme.lightCardHover,
+          hoverColor: isDark
+              ? AppleTheme.darkCardHover
+              : AppleTheme.lightCardHover,
           onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
@@ -95,6 +103,22 @@ class NoteCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
+                    if (onMenu != null && isSelected)
+                      IconButton(
+                        tooltip: 'Altre azioni',
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 28,
+                          height: 28,
+                        ),
+                        padding: EdgeInsets.zero,
+                        onPressed: onMenu,
+                        icon: Icon(
+                          CupertinoIcons.ellipsis,
+                          size: 17,
+                          color: secondaryColor,
+                        ),
+                      ),
                     if (note.isLocked) ...[
                       const SizedBox(width: 6),
                       Icon(
@@ -134,8 +158,12 @@ class NoteCard extends StatelessWidget {
                           fontSize: 13,
                           fontWeight: FontWeight.w400,
                           color: isSelected
-                              ? (isDark ? Colors.white70 : const Color(0xFF4A4A4F))
-                              : (isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary),
+                              ? (isDark
+                                    ? Colors.white70
+                                    : const Color(0xFF4A4A4F))
+                              : (isDark
+                                    ? AppleTheme.darkTextSecondary
+                                    : AppleTheme.lightTextSecondary),
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -152,7 +180,9 @@ class NoteCard extends StatelessWidget {
                     runSpacing: 3,
                     children: [
                       ...note.tags.take(3).map((tag) {
-                        final tagColor = isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight;
+                        final tagColor = isDark
+                            ? AppleTheme.accentYellow
+                            : AppleTheme.accentAmberLight;
                         return GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           onTap: () {
@@ -167,7 +197,10 @@ class NoteCard extends StatelessWidget {
                           child: MouseRegion(
                             cursor: SystemMouseCursors.click,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: isSelected
                                     ? (isDark ? Colors.black26 : Colors.white70)
@@ -188,9 +221,16 @@ class NoteCard extends StatelessWidget {
                       }),
                       if (note.tags.length > 3)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 5,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
-                            color: (isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary).withOpacity(0.2),
+                            color:
+                                (isDark
+                                        ? AppleTheme.darkTextSecondary
+                                        : AppleTheme.lightTextSecondary)
+                                    .withOpacity(0.2),
                             borderRadius: BorderRadius.circular(5),
                           ),
                           child: Text(
@@ -198,7 +238,9 @@ class NoteCard extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
-                              color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                              color: isDark
+                                  ? AppleTheme.darkTextSecondary
+                                  : AppleTheme.lightTextSecondary,
                             ),
                           ),
                         ),

@@ -21,8 +21,7 @@ class MacTitleBar extends StatelessWidget {
   final VoidCallback? onDrawing;
   final VoidCallback? onPhoto;
   final VoidCallback? onLock;
-  final VoidCallback? onShare;
-  final VoidCallback? onExportMarkdown;
+  final VoidCallback? onMoreActions;
   final VoidCallback? onDelete;
   final VoidCallback? onNewNote;
 
@@ -39,21 +38,30 @@ class MacTitleBar extends StatelessWidget {
     this.onDrawing,
     this.onPhoto,
     this.onLock,
-    this.onShare,
-    this.onExportMarkdown,
+    this.onMoreActions,
     this.onDelete,
     this.onNewNote,
   });
 
   @override
   Widget build(BuildContext context) {
-    final hasActiveNote = context.select<NotesProvider, bool>((p) => p.selectedNoteId != null);
-    final isLocked = context.select<NotesProvider, bool>((p) => p.selectedNote?.isLocked ?? false);
-    final isTrashSelected = context.select<NotesProvider, bool>((p) => p.isTrashSelected);
-    final folderTitle = context.select<NotesProvider, String>((p) => _getFolderTitle(p));
+    final hasActiveNote = context.select<NotesProvider, bool>(
+      (p) => p.selectedNoteId != null,
+    );
+    final isLocked = context.select<NotesProvider, bool>(
+      (p) => p.selectedNote?.isLocked ?? false,
+    );
+    final isTrashSelected = context.select<NotesProvider, bool>(
+      (p) => p.isTrashSelected,
+    );
+    final folderTitle = context.select<NotesProvider, String>(
+      (p) => _getFolderTitle(p),
+    );
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final textColor = isDark ? AppleTheme.darkTextPrimary : AppleTheme.lightTextPrimary;
+    final textColor = isDark
+        ? AppleTheme.darkTextPrimary
+        : AppleTheme.lightTextPrimary;
 
     final titleBar = Container(
       height: 52,
@@ -79,14 +87,17 @@ class MacTitleBar extends StatelessWidget {
               // We reserve space for them so they do not overlap custom controls.
               if (!kIsWeb && Platform.isMacOS)
                 const SizedBox(width: 68)
-              else ...[
+              else if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) ...[
                 Row(
                   children: [
                     _buildTrafficLight(
                       color: AppleTheme.trafficRed,
                       tooltip: 'Chiudi',
                       onTap: () async {
-                        if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+                        if (!kIsWeb &&
+                            (Platform.isLinux || Platform.isWindows)) {
+                          // The waiting edit is written before the window closes and the app ends.
+                          await context.read<NotesProvider>().flushOnAppLeavingForeground();
                           await windowManager.close();
                         }
                       },
@@ -96,7 +107,8 @@ class MacTitleBar extends StatelessWidget {
                       color: AppleTheme.trafficYellow,
                       tooltip: 'Riduci a icona',
                       onTap: () async {
-                        if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
+                        if (!kIsWeb &&
+                            (Platform.isLinux || Platform.isWindows)) {
                           await windowManager.minimize();
                         }
                       },
@@ -106,12 +118,9 @@ class MacTitleBar extends StatelessWidget {
                       color: AppleTheme.trafficGreen,
                       tooltip: 'Ingrandisci',
                       onTap: () async {
-                        if (!kIsWeb && (Platform.isLinux || Platform.isWindows)) {
-                          if (await windowManager.isMaximized()) {
-                            await windowManager.unmaximize();
-                          } else {
-                            await windowManager.maximize();
-                          }
+                        if (!kIsWeb &&
+                            (Platform.isLinux || Platform.isWindows)) {
+                          await _toggleMaximized();
                         }
                       },
                     ),
@@ -123,7 +132,9 @@ class MacTitleBar extends StatelessWidget {
               // Sidebar Toggle Button
               _MacIconButton(
                 icon: CupertinoIcons.sidebar_left,
-                tooltip: isSidebarVisible ? 'Nascondi barra laterale' : 'Mostra barra laterale',
+                tooltip: isSidebarVisible
+                    ? 'Nascondi barra laterale'
+                    : 'Mostra barra laterale',
                 onPressed: onToggleSidebar,
                 isActive: isSidebarVisible,
               ),
@@ -133,7 +144,9 @@ class MacTitleBar extends StatelessWidget {
               Container(
                 height: 18,
                 width: 1,
-                color: isDark ? AppleTheme.darkDivider : AppleTheme.lightDivider,
+                color: isDark
+                    ? AppleTheme.darkDivider
+                    : AppleTheme.lightDivider,
               ),
               const SizedBox(width: 10),
 
@@ -156,336 +169,473 @@ class MacTitleBar extends StatelessWidget {
 
               // 2. Rich Text Toolbar Controls
               if (hasActiveNote && !isTrashSelected) ...[
-            // macOS Sequoia-style "Aa" Paragraph Style Menu
-            PopupMenuButton<BlockType>(
-              tooltip: 'Stile testo (Aa)',
-              offset: const Offset(0, 36),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
-              onSelected: onSelectBlockType,
-              itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: BlockType.title,
-                  child: Text(
-                    'Titolo',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: textColor),
+                // macOS Sequoia-style "Aa" Paragraph Style Menu
+                PopupMenuButton<BlockType>(
+                  tooltip: 'Stile testo (Aa)',
+                  offset: const Offset(0, 36),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                ),
-                PopupMenuItem(
-                  value: BlockType.h1,
-                  child: Text(
-                    'Intestazione',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: textColor),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: BlockType.h2,
-                  child: Text(
-                    'Sottointestazione',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textColor),
-                  ),
-                ),
-                PopupMenuItem(
-                  value: BlockType.paragraph,
-                  child: Text(
-                    'Corpo',
-                    style: TextStyle(fontSize: 13.5, color: textColor),
-                  ),
-                ),
-                const PopupMenuDivider(),
-                PopupMenuItem(
-                  value: BlockType.checklist,
-                  child: Row(
-                    children: [
-                      Icon(CupertinoIcons.checkmark_circle, size: 16, color: isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight),
-                      const SizedBox(width: 8),
-                      Text('Checklist', style: TextStyle(fontSize: 13.5, color: textColor)),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: BlockType.bullet,
-                  child: Row(
-                    children: [
-                      Icon(CupertinoIcons.list_bullet, size: 16, color: textColor),
-                      const SizedBox(width: 8),
-                      Text('Elenco puntato', style: TextStyle(fontSize: 13.5, color: textColor)),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: BlockType.numbered,
-                  child: Row(
-                    children: [
-                      Icon(CupertinoIcons.list_number, size: 16, color: textColor),
-                      const SizedBox(width: 8),
-                      Text('Elenco numerato', style: TextStyle(fontSize: 13.5, color: textColor)),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: BlockType.code,
-                  child: Row(
-                    children: [
-                      Icon(CupertinoIcons.chevron_left_slash_chevron_right, size: 16, color: textColor),
-                      const SizedBox(width: 8),
-                      Text('Monospazio', style: TextStyle(fontFamily: 'monospace', fontSize: 13, color: textColor)),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: BlockType.quote,
-                  child: Row(
-                    children: [
-                      Icon(CupertinoIcons.quote_bubble, size: 16, color: textColor),
-                      const SizedBox(width: 8),
-                      Text('Citazione', style: TextStyle(fontSize: 13.5, fontStyle: FontStyle.italic, color: textColor)),
-                    ],
-                  ),
-                ),
-              ],
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Aa',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: textColor,
+                  color: isDark
+                      ? const Color(0xFF2C2C2E)
+                      : const Color(0xFFF2F2F7),
+                  onSelected: onSelectBlockType,
+                  itemBuilder: (context) => [
+                    PopupMenuItem(
+                      value: BlockType.title,
+                      child: Text(
+                        'Titolo',
+                        style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                          color: textColor,
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 2),
-                    Icon(
-                      CupertinoIcons.chevron_down,
-                      size: 11,
-                      color: (isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary).withOpacity(0.8),
+                    PopupMenuItem(
+                      value: BlockType.h1,
+                      child: Text(
+                        'Intestazione',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: textColor,
+                        ),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: BlockType.h2,
+                      child: Text(
+                        'Sottointestazione',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: textColor,
+                        ),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: BlockType.paragraph,
+                      child: Text(
+                        'Corpo',
+                        style: TextStyle(fontSize: 13.5, color: textColor),
+                      ),
+                    ),
+                    const PopupMenuDivider(),
+                    PopupMenuItem(
+                      value: BlockType.checklist,
+                      child: Row(
+                        children: [
+                          Icon(
+                            CupertinoIcons.checkmark_circle,
+                            size: 16,
+                            color: isDark
+                                ? AppleTheme.accentYellow
+                                : AppleTheme.accentAmberLight,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Checklist',
+                            style: TextStyle(fontSize: 13.5, color: textColor),
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: BlockType.bullet,
+                      child: Row(
+                        children: [
+                          Icon(
+                            CupertinoIcons.list_bullet,
+                            size: 16,
+                            color: textColor,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Elenco puntato',
+                            style: TextStyle(fontSize: 13.5, color: textColor),
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: BlockType.numbered,
+                      child: Row(
+                        children: [
+                          Icon(
+                            CupertinoIcons.list_number,
+                            size: 16,
+                            color: textColor,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Elenco numerato',
+                            style: TextStyle(fontSize: 13.5, color: textColor),
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: BlockType.code,
+                      child: Row(
+                        children: [
+                          Icon(
+                            CupertinoIcons.chevron_left_slash_chevron_right,
+                            size: 16,
+                            color: textColor,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Monospazio',
+                            style: TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 13,
+                              color: textColor,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: BlockType.quote,
+                      child: Row(
+                        children: [
+                          Icon(
+                            CupertinoIcons.quote_bubble,
+                            size: 16,
+                            color: textColor,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Citazione',
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontStyle: FontStyle.italic,
+                              color: textColor,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'Aa',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: textColor,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(
+                          CupertinoIcons.chevron_down,
+                          size: 11,
+                          color:
+                              (isDark
+                                      ? AppleTheme.darkTextSecondary
+                                      : AppleTheme.lightTextSecondary)
+                                  .withOpacity(0.8),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 4),
+                const SizedBox(width: 4),
 
-            // Bold, Italic, Underline (spacious screens only; available via shortcuts and Aa menu)
-            if (!isCompact) ...[
-              _MacIconButton(
-                icon: CupertinoIcons.bold,
-                tooltip: 'Grassetto (CTRL+B)',
-                onPressed: onBold,
-              ),
-              const SizedBox(width: 2),
-              _MacIconButton(
-                icon: CupertinoIcons.italic,
-                tooltip: 'Corsivo (CTRL+I)',
-                onPressed: onItalic,
-              ),
-              const SizedBox(width: 2),
-              _MacIconButton(
-                icon: CupertinoIcons.underline,
-                tooltip: 'Sottolineato (CTRL+U)',
-                onPressed: onUnderline,
-              ),
-              const SizedBox(width: 4),
-            ],
+                // Bold, Italic, Underline (spacious screens only; available via shortcuts and Aa menu)
+                if (!isCompact) ...[
+                  _MacIconButton(
+                    icon: CupertinoIcons.bold,
+                    tooltip: 'Grassetto (CTRL+B)',
+                    onPressed: onBold,
+                  ),
+                  const SizedBox(width: 2),
+                  _MacIconButton(
+                    icon: CupertinoIcons.italic,
+                    tooltip: 'Corsivo (CTRL+I)',
+                    onPressed: onItalic,
+                  ),
+                  const SizedBox(width: 2),
+                  _MacIconButton(
+                    icon: CupertinoIcons.underline,
+                    tooltip: 'Sottolineato (CTRL+U)',
+                    onPressed: onUnderline,
+                  ),
+                  const SizedBox(width: 4),
+                ],
 
-            // Checklist quick button
-            _MacIconButton(
-              icon: CupertinoIcons.checkmark_circle,
-              tooltip: 'Checklist',
-              onPressed: onChecklist,
-            ),
-            const SizedBox(width: 4),
+                // Checklist quick button
+                _MacIconButton(
+                  icon: CupertinoIcons.checkmark_circle,
+                  tooltip: 'Checklist',
+                  onPressed: onChecklist,
+                ),
+                const SizedBox(width: 4),
 
-            if (isVeryCompact) ...[
-              // Collapsed Insert / Attachments Menu
-              PopupMenuButton<String>(
-                tooltip: 'Inserisci',
-                offset: const Offset(0, 36),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
-                onSelected: (val) {
-                  if (val == 'table') onTable?.call();
-                  if (val == 'drawing') onDrawing?.call();
-                  if (val == 'photo') onPhoto?.call();
-                },
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    value: 'table',
-                    child: Row(
-                      children: [
-                        Icon(CupertinoIcons.table, size: 16, color: textColor),
-                        const SizedBox(width: 10),
-                        Text('Tabella', style: TextStyle(fontSize: 13.5, color: textColor)),
-                      ],
+                if (isVeryCompact) ...[
+                  // Collapsed Insert / Attachments Menu
+                  PopupMenuButton<String>(
+                    tooltip: 'Inserisci',
+                    offset: const Offset(0, 36),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    color: isDark
+                        ? const Color(0xFF2C2C2E)
+                        : const Color(0xFFF2F2F7),
+                    onSelected: (val) {
+                      if (val == 'table') onTable?.call();
+                      if (val == 'drawing') onDrawing?.call();
+                      if (val == 'photo') onPhoto?.call();
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'table',
+                        child: Row(
+                          children: [
+                            Icon(
+                              CupertinoIcons.table,
+                              size: 16,
+                              color: textColor,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Tabella',
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                color: textColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'drawing',
+                        child: Row(
+                          children: [
+                            Icon(
+                              CupertinoIcons.pencil_outline,
+                              size: 16,
+                              color: textColor,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Disegno',
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                color: textColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'photo',
+                        child: Row(
+                          children: [
+                            Icon(
+                              CupertinoIcons.photo,
+                              size: 16,
+                              color: textColor,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              'Immagine',
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                color: textColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    child: const Padding(
+                      padding: EdgeInsets.all(6.0),
+                      child: Icon(CupertinoIcons.add, size: 18),
                     ),
                   ),
-                  PopupMenuItem(
-                    value: 'drawing',
-                    child: Row(
-                      children: [
-                        Icon(CupertinoIcons.pencil_outline, size: 16, color: textColor),
-                        const SizedBox(width: 10),
-                        Text('Disegno', style: TextStyle(fontSize: 13.5, color: textColor)),
-                      ],
-                    ),
+                ] else ...[
+                  // Table
+                  _MacIconButton(
+                    icon: CupertinoIcons.table,
+                    tooltip: 'Tabella',
+                    onPressed: onTable,
                   ),
-                  PopupMenuItem(
-                    value: 'photo',
-                    child: Row(
-                      children: [
-                        Icon(CupertinoIcons.photo, size: 16, color: textColor),
-                        const SizedBox(width: 10),
-                        Text('Immagine', style: TextStyle(fontSize: 13.5, color: textColor)),
-                      ],
-                    ),
+                  const SizedBox(width: 4),
+
+                  // Drawing canvas
+                  _MacIconButton(
+                    icon: CupertinoIcons.pencil_outline,
+                    tooltip: 'Disegno',
+                    onPressed: onDrawing,
+                  ),
+                  const SizedBox(width: 4),
+
+                  // Photo attachment
+                  _MacIconButton(
+                    icon: CupertinoIcons.photo,
+                    tooltip: 'Inserisci immagine',
+                    onPressed: onPhoto,
                   ),
                 ],
-                child: const Padding(
-                  padding: EdgeInsets.all(6.0),
-                  child: Icon(CupertinoIcons.add, size: 18),
+                const SizedBox(width: 6),
+
+                // Subtle vertical separator
+                Container(
+                  height: 18,
+                  width: 1,
+                  color: isDark
+                      ? AppleTheme.darkDivider
+                      : AppleTheme.lightDivider,
                 ),
-              ),
-            ] else ...[
-              // Table
-              _MacIconButton(
-                icon: CupertinoIcons.table,
-                tooltip: 'Tabella',
-                onPressed: onTable,
-              ),
-              const SizedBox(width: 4),
+                const SizedBox(width: 6),
 
-              // Drawing canvas
-              _MacIconButton(
-                icon: CupertinoIcons.pencil_outline,
-                tooltip: 'Disegno',
-                onPressed: onDrawing,
-              ),
-              const SizedBox(width: 4),
-
-              // Photo attachment
-              _MacIconButton(
-                icon: CupertinoIcons.photo,
-                tooltip: 'Inserisci immagine',
-                onPressed: onPhoto,
-              ),
-            ],
-            const SizedBox(width: 6),
-
-            // Subtle vertical separator
-            Container(
-              height: 18,
-              width: 1,
-              color: isDark ? AppleTheme.darkDivider : AppleTheme.lightDivider,
-            ),
-            const SizedBox(width: 6),
-
-            // Lock
-            _MacIconButton(
-              icon: isLocked ? CupertinoIcons.lock_fill : CupertinoIcons.lock,
-              color: isLocked ? (isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight) : null,
-              tooltip: isLocked ? 'Nota Protetta' : 'Proteggi con Lucchetto',
-              onPressed: onLock,
-            ),
-            const SizedBox(width: 4),
-
-            // Share & Export Popup Menu
-            PopupMenuButton<String>(
-              tooltip: 'Condividi o esporta nota',
-              offset: const Offset(0, 36),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              color: isDark ? const Color(0xFF2C2C2E) : const Color(0xFFF2F2F7),
-              onSelected: (val) {
-                if (val == 'share') onShare?.call();
-                if (val == 'export_md') onExportMarkdown?.call();
-              },
-              itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: 'share',
-                  child: Row(
-                    children: [
-                      Icon(CupertinoIcons.share, size: 16, color: textColor),
-                      const SizedBox(width: 10),
-                      Text('Condividi...', style: TextStyle(fontSize: 13.5, color: textColor)),
-                    ],
-                  ),
+                // Lock
+                _MacIconButton(
+                  icon: isLocked
+                      ? CupertinoIcons.lock_fill
+                      : CupertinoIcons.lock,
+                  color: isLocked
+                      ? (isDark
+                            ? AppleTheme.accentYellow
+                            : AppleTheme.accentAmberLight)
+                      : null,
+                  tooltip: isLocked
+                      ? 'Nota Protetta'
+                      : 'Proteggi con Lucchetto',
+                  onPressed: onLock,
                 ),
-                PopupMenuItem(
-                  value: 'export_md',
-                  child: Row(
-                    children: [
-                      Icon(CupertinoIcons.doc_text, size: 16, color: isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight),
-                      const SizedBox(width: 10),
-                      Text('Esporta come Markdown (.md)', style: TextStyle(fontSize: 13.5, color: textColor)),
-                    ],
-                  ),
+                const SizedBox(width: 4),
+
+                _MacIconButton(
+                  icon: CupertinoIcons.ellipsis,
+                  tooltip: 'Altre azioni',
+                  onPressed: onMoreActions,
                 ),
+                const SizedBox(width: 4),
+
+                // Delete
+                _MacIconButton(
+                  icon: CupertinoIcons.trash,
+                  tooltip: 'Elimina nota',
+                  onPressed: onDelete,
+                ),
+                const SizedBox(width: 6),
               ],
-              child: const Padding(
-                padding: EdgeInsets.all(6.0),
-                child: Icon(CupertinoIcons.share, size: 18),
-              ),
-            ),
-            const SizedBox(width: 4),
-
-            // Delete
-            _MacIconButton(
-              icon: CupertinoIcons.trash,
-              tooltip: 'Elimina nota',
-              onPressed: onDelete,
-            ),
-            const SizedBox(width: 6),
-          ],
-
-          // New Note Button (Apple Gold Button)
-          if (!isTrashSelected) ...[
-            if (isCompact)
-              _MacIconButton(
-                icon: CupertinoIcons.square_pencil,
-                tooltip: 'Nuova nota',
-                color: isDark ? AppleTheme.accentYellow : AppleTheme.accentAmberLight,
-                isActive: true,
-                onPressed: onNewNote ?? () => context.read<NotesProvider>().createNote(),
-              )
-            else
-              CupertinoButton(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                minSize: 30,
-                color: AppleTheme.accentYellow,
-                borderRadius: BorderRadius.circular(8),
-                onPressed: onNewNote ?? () => context.read<NotesProvider>().createNote(),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: const [
-                    Icon(CupertinoIcons.square_pencil, color: CupertinoColors.black, size: 16),
-                    SizedBox(width: 6),
-                    Text(
-                      'Nuova nota',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: CupertinoColors.black,
-                      ),
-                    ),
-                  ],
+              if (hasActiveNote && isTrashSelected) ...[
+                _MacIconButton(
+                  icon: isLocked
+                      ? CupertinoIcons.lock_fill
+                      : CupertinoIcons.lock,
+                  color: isLocked
+                      ? (isDark
+                            ? AppleTheme.accentYellow
+                            : AppleTheme.accentAmberLight)
+                      : null,
+                  tooltip: isLocked
+                      ? 'Nota Protetta'
+                      : 'Proteggi con Lucchetto',
+                  onPressed: onLock,
                 ),
-              ),
-          ],
-        ],
-      );
-    },
-  ),
-);
+                const SizedBox(width: 4),
+                _MacIconButton(
+                  icon: CupertinoIcons.ellipsis,
+                  tooltip: 'Altre azioni',
+                  onPressed: onMoreActions,
+                ),
+                const SizedBox(width: 4),
+                // Delete again: re-stamps the trash date of the trashed note
+                _MacIconButton(
+                  icon: CupertinoIcons.trash,
+                  tooltip: 'Elimina nota',
+                  onPressed: onDelete,
+                ),
+                const SizedBox(width: 6),
+              ],
 
-    if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
-      return DragToMoveArea(child: titleBar);
+              // New Note Button (Apple Gold Button)
+              if (!isTrashSelected) ...[
+                if (isCompact)
+                  _MacIconButton(
+                    icon: CupertinoIcons.square_pencil,
+                    tooltip: 'Nuova nota',
+                    color: isDark
+                        ? AppleTheme.accentYellow
+                        : AppleTheme.accentAmberLight,
+                    isActive: true,
+                    onPressed:
+                        onNewNote ??
+                        () => context.read<NotesProvider>().createNote(),
+                  )
+                else
+                  CupertinoButton(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    minSize: 30,
+                    color: AppleTheme.accentYellow,
+                    borderRadius: BorderRadius.circular(8),
+                    onPressed:
+                        onNewNote ??
+                        () => context.read<NotesProvider>().createNote(),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(
+                          CupertinoIcons.square_pencil,
+                          color: CupertinoColors.black,
+                          size: 16,
+                        ),
+                        SizedBox(width: 6),
+                        Text(
+                          'Nuova nota',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: CupertinoColors.black,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+
+    if (!kIsWeb &&
+        (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+      return GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onPanStart: (_) => windowManager.startDragging(),
+        onDoubleTap: _toggleMaximized,
+        child: titleBar,
+      );
     }
     return titleBar;
+  }
+
+  Future<void> _toggleMaximized() async {
+    if (await windowManager.isMaximized()) {
+      await windowManager.unmaximize();
+    } else {
+      await windowManager.maximize();
+    }
   }
 
   String _getFolderTitle(NotesProvider provider) {
@@ -494,9 +644,9 @@ class MacTitleBar extends StatelessWidget {
       return provider.selectedTags.map((t) => '#$t').join(' ');
     }
     final folder = provider.folders.cast<dynamic>().firstWhere(
-          (f) => f.id == provider.selectedFolderId,
-          orElse: () => null,
-        );
+      (f) => f.id == provider.selectedFolderId,
+      orElse: () => null,
+    );
     return folder?.name ?? 'Tutte le note';
   }
 
@@ -554,10 +704,13 @@ class _MacIconButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    final baseColor = color ??
+    final baseColor =
+        color ??
         (isActive
             ? AppleTheme.accentYellow
-            : (isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary));
+            : (isDark
+                  ? AppleTheme.darkTextSecondary
+                  : AppleTheme.lightTextSecondary));
 
     return Tooltip(
       message: tooltip,
@@ -568,11 +721,7 @@ class _MacIconButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         color: isActive ? AppleTheme.accentYellow.withOpacity(0.15) : null,
         onPressed: onPressed,
-        child: Icon(
-          icon,
-          size: 18,
-          color: baseColor,
-        ),
+        child: Icon(icon, size: 18, color: baseColor),
       ),
     );
   }

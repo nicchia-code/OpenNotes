@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -6,8 +8,40 @@ import '../models/note_model.dart';
 
 /// Service to generate Apple Notes-styled formatted PDF documents.
 class PdfExportService {
-  static Future<void> exportNoteToPdf(Note note) async {
-    final pdf = pw.Document();
+  static bool _printDialogOpen = false;
+
+  /// Opens the print dialog for [note]. Requests made while a print dialog is
+  /// already open are ignored, so only one dialog is ever shown at a time.
+  /// A protected note opens the dialog only when [confirmPin] returns true.
+  static Future<void> exportNoteToPdf(
+    Note note, {
+    required Future<bool> Function() confirmPin,
+  }) async {
+    if (_printDialogOpen) return;
+    _printDialogOpen = true;
+    try {
+      if (note.isLocked && !await confirmPin()) return;
+      await _openPrintDialog(note);
+    } finally {
+      _printDialogOpen = false;
+    }
+  }
+
+  static Future<void> _openPrintDialog(Note note) async {
+    final pdf = await _buildDocument(note);
+
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: '${note.title}.pdf',
+    );
+  }
+
+  /// The PDF bytes of [note], as the print dialog receives them.
+  @visibleForTesting
+  static Future<Uint8List> buildPdfBytes(Note note) async => (await _buildDocument(note)).save();
+
+  static Future<pw.Document> _buildDocument(Note note) async {
+    final pdf = pw.Document(theme: await _unicodeTheme());
     final dateFormat = DateFormat('d MMMM yyyy, HH:mm', 'it_IT');
 
     pdf.addPage(
@@ -46,8 +80,7 @@ class PdfExportService {
           widgets.add(pw.SizedBox(height: 16));
 
           // Body text parsing
-          final lines = note.content.split('\n');
-          bool skippedFirstLine = false;
+          final lines = note.toMarkdownBody().split('\n');
 
           for (final rawLine in lines) {
             final line = rawLine.trimRight();
@@ -55,50 +88,48 @@ class PdfExportService {
               widgets.add(pw.SizedBox(height: 8));
               continue;
             }
-
-            if (!skippedFirstLine && line.trim() == note.title) {
-              skippedFirstLine = true;
-              continue;
-            }
+            // List items keep their indentation
+            final bullet = line.trimLeft();
+            final indent = (line.length - bullet.length) * 4.0;
 
             // Headings
-            if (line.startsWith('# ')) {
+            if (hasMarker(bullet, '# ')) {
               widgets.add(
                 pw.Padding(
-                  padding: const pw.EdgeInsets.only(top: 12, bottom: 4),
+                  padding: pw.EdgeInsets.fromLTRB(indent, 12, 0, 4),
                   child: pw.Text(
-                    line.substring(2).trim(),
+                    headingText(bullet, '# '),
                     style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
                   ),
                 ),
               );
-            } else if (line.startsWith('## ')) {
+            } else if (hasMarker(bullet, '## ')) {
               widgets.add(
                 pw.Padding(
-                  padding: const pw.EdgeInsets.only(top: 10, bottom: 4),
+                  padding: pw.EdgeInsets.fromLTRB(indent, 10, 0, 4),
                   child: pw.Text(
-                    line.substring(3).trim(),
+                    headingText(bullet, '## '),
                     style: pw.TextStyle(fontSize: 15, fontWeight: pw.FontWeight.bold),
                   ),
                 ),
               );
-            } else if (line.startsWith('### ')) {
+            } else if (hasMarker(bullet, '### ')) {
               widgets.add(
                 pw.Padding(
-                  padding: const pw.EdgeInsets.only(top: 8, bottom: 4),
+                  padding: pw.EdgeInsets.fromLTRB(indent, 8, 0, 4),
                   child: pw.Text(
-                    line.substring(4).trim(),
+                    headingText(bullet, '### '),
                     style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold),
                   ),
                 ),
               );
-            } else if (line.startsWith('- [ ] ') || line.startsWith('- [x] ') || line.startsWith('- [X] ')) {
+            } else if (hasMarker(bullet, '- [ ] ') || hasMarker(bullet, '- [x] ') || hasMarker(bullet, '- [X] ')) {
               // Checklist item
-              final isChecked = !line.startsWith('- [ ] ');
-              final text = line.substring(6).trim();
+              final isChecked = !hasMarker(bullet, '- [ ] ');
+              final text = afterMarker(bullet, '- [ ] ');
               widgets.add(
                 pw.Padding(
-                  padding: const pw.EdgeInsets.symmetric(vertical: 3),
+                  padding: pw.EdgeInsets.fromLTRB(indent, 3, 0, 3),
                   child: pw.Row(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
@@ -129,11 +160,11 @@ class PdfExportService {
                   ),
                 ),
               );
-            } else if (line.startsWith('- ') || line.startsWith('* ')) {
+            } else if (hasMarker(bullet, '- ') || hasMarker(bullet, '* ')) {
               // Bullet item
               widgets.add(
                 pw.Padding(
-                  padding: const pw.EdgeInsets.symmetric(vertical: 2),
+                  padding: pw.EdgeInsets.fromLTRB(indent, 2, 0, 2),
                   child: pw.Row(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
@@ -148,7 +179,7 @@ class PdfExportService {
                       ),
                       pw.Expanded(
                         child: pw.Text(
-                          line.substring(2).trim(),
+                          afterMarker(bullet, '- '),
                           style: const pw.TextStyle(fontSize: 11),
                         ),
                       ),
@@ -174,10 +205,31 @@ class PdfExportService {
         },
       ),
     );
-
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-      name: '${note.title}.pdf',
-    );
+    return pdf;
   }
+
+  /// Text uses embedded Unicode fonts instead of the built-in Helvetica, which
+  /// only covers Latin-1. The color emoji font is a fallback for emoji.
+  static Future<pw.ThemeData> _unicodeTheme() async {
+    final base = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final bold = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans-Bold.ttf'));
+    final emoji = pw.Font.ttf(await rootBundle.load('assets/fonts/NotoColorEmoji.ttf'));
+    return pw.ThemeData.withFont(base: base, bold: bold, fontFallback: [emoji]);
+  }
+}
+
+/// Whether [line] carries [marker] (for example `- `), also when the marker
+/// has no text after it: trimming the line drops the trailing space.
+bool hasMarker(String line, String marker) =>
+    line == marker.trimRight() || line.startsWith(marker);
+
+/// The text after [marker], or empty when the marker stands alone.
+String afterMarker(String line, String marker) =>
+    line.length <= marker.length ? '' : line.substring(marker.length).trim();
+
+/// The heading text after [marker]. An empty heading gets a non-breaking space:
+/// an empty text has no line, so it would take no heading height.
+String headingText(String line, String marker) {
+  final text = afterMarker(line, marker);
+  return text.isEmpty ? '\u00A0' : text;
 }

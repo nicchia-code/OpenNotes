@@ -29,6 +29,12 @@ class NoteBlock {
   List<List<String>> tableData;
   RichTextEditingController? controller;
   FocusNode? focusNode;
+
+  /// Focuses the first (`last: false`) or last (`last: true`) cell; set by the table widget.
+  void Function({required bool last})? focusCell;
+
+  /// Whether a cell of this table has the cursor; set by the table widget.
+  bool Function()? hasCellFocus;
   Map<int, BlockType> lineStyles;
 
   NoteBlock({
@@ -122,35 +128,81 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   final List<NoteBlock> _blocks = [];
   final ScrollController _scrollController = ScrollController();
   static const _uuid = Uuid();
+
+  @visibleForTesting
+  List<NoteBlock> get debugBlocks => List.unmodifiable(_blocks);
+
+  /// Ids of the notes whose text has been shown since the app opened.
+  static final Set<String> _noteIdsWithShownText = {};
   String _lastSerializedContent = '';
-  int? _activeBlockIndex;
-  int? _slashMenuBlockIndex;
+  NoteBlock? _activeBlock;
+
+  /// Last text section that had the focus; the Block menu opens under it when none has.
+  NoteBlock? _lastTextBlock;
+  NoteBlock? _slashMenuBlock;
   int? _tagAutocompleteBlockIndex;
   String? _tagAutocompleteQuery;
   bool _isPreviewMode = false;
   Timer? _saveDebounceTimer;
+  // Set while shown, so an export can take the text still waiting in the debounce.
+  NotesProvider? _provider;
 
   bool get isPreviewMode => _isPreviewMode;
 
-  bool get _hasActiveFocus =>
-      _blocks.any((b) => b.focusNode?.hasFocus ?? false);
+  bool get _hasActiveFocus => _blocks.any(
+    (b) =>
+        (b.focusNode?.hasFocus ?? false) || (b.hasCellFocus?.call() ?? false),
+  );
+
+  /// Whether the text of this note has been shown since the app opened. Style changes do not count.
+  bool get _textShown => _noteIdsWithShownText.contains(widget.note.id);
+
+  /// Whether the active part holds text (not a table, image or divider).
+  bool _isTextPart(NoteBlock b) =>
+      b.type != BlockType.table &&
+      b.type != BlockType.image &&
+      b.type != BlockType.divider;
 
   NoteBlock? get _currentActiveBlock {
     for (final b in _blocks) {
       if (b.focusNode?.hasFocus ?? false) return b;
     }
-    if (_activeBlockIndex != null &&
-        _activeBlockIndex! >= 0 &&
-        _activeBlockIndex! < _blocks.length) {
-      return _blocks[_activeBlockIndex!];
+    if (_activeBlock != null && _blocks.contains(_activeBlock)) {
+      return _activeBlock;
     }
     return _blocks.isNotEmpty ? _blocks.last : null;
+  }
+
+  /// Position of the active part; -1 when there is none.
+  int get _activeBlockPos {
+    final active = _currentActiveBlock;
+    return active == null ? -1 : _blocks.indexOf(active);
+  }
+
+  /// Part that is active when the note opens: the second, or the first if there is only one.
+  NoteBlock? get _initialActiveBlock {
+    if (_blocks.isEmpty) return null;
+    return _blocks.length > 1 ? _blocks[1] : _blocks[0];
+  }
+
+  /// Text section the Block menu opens under: the focused one, else the last one used, else the last text section.
+  NoteBlock? get _blockMenuTarget {
+    for (final b in _blocks) {
+      if (b.focusNode?.hasFocus ?? false) return b;
+    }
+    if (_lastTextBlock != null && _blocks.contains(_lastTextBlock)) {
+      return _lastTextBlock;
+    }
+    for (final b in _blocks.reversed) {
+      if (_isTextPart(b)) return b;
+    }
+    return null;
   }
 
   void togglePreviewMode() {
     setState(() {
       _isPreviewMode = !_isPreviewMode;
-      _activeBlockIndex = null;
+      _activeBlock = null;
     });
   }
 
@@ -159,32 +211,42 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     super.initState();
     _lastSerializedContent = widget.note.content;
     _parseContentToBlocks(widget.note.content);
-    _activeBlockIndex = _blocks.length > 1 ? 1 : 0;
+    _activeBlock = _initialActiveBlock;
+    _provider = context.read<NotesProvider?>();
+    _provider?.attachEditorDelivery(_deliverWaitingText);
   }
 
   @override
   void didUpdateWidget(covariant NotionDocumentEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.note.id != widget.note.id) {
-      _saveDebounceTimer?.cancel();
+      // The text still waiting belongs to the old note: hand it over before its blocks go.
+      if (_saveDebounceTimer?.isActive ?? false) {
+        _saveDebounceTimer!.cancel();
+        _doSerializeAndSave(noteId: oldWidget.note.id);
+      }
       _disposeControllers();
-      _activeBlockIndex = _blocks.length > 1 ? 1 : 0;
-      _slashMenuBlockIndex = null;
+      _slashMenuBlock = null;
       _tagAutocompleteBlockIndex = null;
       _tagAutocompleteQuery = null;
       _lastSerializedContent = widget.note.content;
       _parseContentToBlocks(widget.note.content);
+      _activeBlock = _initialActiveBlock;
     } else if (oldWidget.note.content != widget.note.content) {
       // Remote sync update: only re-parse if different from our local edit AND user is not actively typing
       if (widget.note.content != _lastSerializedContent && !_hasActiveFocus) {
+        // The reload rebuilds the parts: keep the active one by its position.
+        final activePos = _activeBlockPos;
         _saveDebounceTimer?.cancel();
         _disposeControllers();
-        _activeBlockIndex = null;
-        _slashMenuBlockIndex = null;
+        _slashMenuBlock = null;
         _tagAutocompleteBlockIndex = null;
         _tagAutocompleteQuery = null;
         _lastSerializedContent = widget.note.content;
         _parseContentToBlocks(widget.note.content);
+        _activeBlock = activePos >= 0 && activePos < _blocks.length
+            ? _blocks[activePos]
+            : _initialActiveBlock;
       }
     }
   }
@@ -192,9 +254,17 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   @override
   void dispose() {
     _saveDebounceTimer?.cancel();
+    _provider?.detachEditorDelivery(_deliverWaitingText);
     _disposeControllers();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  /// Writes the text waiting in the debounce window now; a no-op otherwise.
+  void _deliverWaitingText() {
+    if (_saveDebounceTimer?.isActive ?? false) {
+      _serializeAndSave(immediate: true);
+    }
   }
 
   void _disposeControllers() {
@@ -209,6 +279,23 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     b.focusNode?.dispose();
   }
 
+  /// Removes the part at [index]; if it was the active part, none is remembered.
+  void _removeBlockAt(int index) {
+    final block = _blocks.removeAt(index);
+    _disposeBlock(block);
+    if (identical(_activeBlock, block)) _activeBlock = null;
+    // The tag menu is tracked by position: a removed section takes its menu, later ones shift up.
+    final tagIndex = _tagAutocompleteBlockIndex;
+    if (tagIndex != null && tagIndex == index) {
+      _tagAutocompleteBlockIndex = null;
+      _tagAutocompleteQuery = null;
+    } else if (tagIndex != null && tagIndex > index) {
+      _tagAutocompleteBlockIndex = tagIndex - 1;
+    }
+    if (identical(_lastTextBlock, block)) _lastTextBlock = null;
+    if (identical(_slashMenuBlock, block)) _slashMenuBlock = null;
+  }
+
   void _parseContentToBlocks(String rawContent) {
     _disposeControllers();
     _blocks.clear();
@@ -216,16 +303,21 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final trimmed = rawContent.trim();
     if (trimmed.startsWith('[')) {
       try {
-        final list = jsonDecode(trimmed) as List<dynamic>;
-        final rawBlocks = <NoteBlock>[];
-        for (final item in list) {
-          if (item is Map<String, dynamic>) {
-            rawBlocks.add(NoteBlock.fromJson(item));
-          }
+        final list = jsonDecode(trimmed);
+        // Only a list whose items are all objects is a block document; anything else is plain text.
+        if (list is! List ||
+            !list.every((item) => item is Map<String, dynamic>)) {
+          throw const FormatException('not a block list');
         }
+        final rawBlocks = <NoteBlock>[
+          for (final item in list)
+            NoteBlock.fromJson(item as Map<String, dynamic>),
+        ];
 
         final mergedBlocks = <NoteBlock>[];
         String currentText = '';
+        // A text block keeps its section even when its text is empty.
+        var hasTextBlock = false;
         final currentSpans = <StyleSpan>[];
         final currentLineStyles = <int, BlockType>{};
         int currentLineIdx = 0;
@@ -233,6 +325,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
         void flushText() {
           if (currentText.isNotEmpty ||
+              hasTextBlock ||
               (mergedBlocks.isEmpty && rawBlocks.isEmpty)) {
             mergedBlocks.add(
               NoteBlock(
@@ -243,12 +336,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 lineStyles: Map.from(currentLineStyles),
               ),
             );
-            currentText = '';
-            currentSpans.clear();
-            currentLineStyles.clear();
-            currentLineIdx = 0;
-            currentId = null;
           }
+          currentText = '';
+          hasTextBlock = false;
+          currentSpans.clear();
+          currentLineStyles.clear();
+          currentLineIdx = 0;
+          currentId = null;
         }
 
         for (final b in rawBlocks) {
@@ -258,6 +352,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
             flushText();
             mergedBlocks.add(b);
           } else {
+            hasTextBlock = true;
             currentId ??= b.id;
 
             final rawLinesInBlock = b.text.split('\n');
@@ -279,13 +374,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 detectedStyle = b.type;
               }
 
-              if (lineTrimmed.startsWith('### ')) {
+              if (line.startsWith('### ')) {
                 detectedStyle = BlockType.h3;
                 line = line.replaceFirst('### ', '');
-              } else if (lineTrimmed.startsWith('## ')) {
+              } else if (line.startsWith('## ')) {
                 detectedStyle = BlockType.h2;
                 line = line.replaceFirst('## ', '');
-              } else if (lineTrimmed.startsWith('# ')) {
+              } else if (line.startsWith('# ')) {
                 detectedStyle = currentLineIdx == 0
                     ? BlockType.title
                     : BlockType.h1;
@@ -297,36 +392,58 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 linePrefix = '• ';
                 detectedStyle = BlockType.paragraph;
               } else if (detectedStyle == BlockType.numbered) {
-                linePrefix = '1. ';
-                detectedStyle = BlockType.paragraph;
+                // A number already in the text stays there, and so does the line type.
+                if (!RegExp(r'^\s*\d+\.').hasMatch(line)) {
+                  linePrefix = '1. ';
+                  detectedStyle = BlockType.paragraph;
+                }
               } else if (detectedStyle == BlockType.checklist) {
                 linePrefix = b.isChecked ? '● ' : '○ ';
                 detectedStyle = BlockType.paragraph;
               } else if (detectedStyle == BlockType.quote) {
-                linePrefix = '> ';
-                detectedStyle = BlockType.paragraph;
+                // A quote sign already in the text stays there, indent included.
+                if (!RegExp(r'^\s*> ').hasMatch(line)) {
+                  linePrefix = '> ';
+                  detectedStyle = BlockType.paragraph;
+                }
               } else if (detectedStyle == BlockType.code) {
-                linePrefix = '``` ';
-                detectedStyle = BlockType.paragraph;
-              } else if (lineTrimmed.startsWith('- [ ]') ||
-                  lineTrimmed.startsWith('[ ]')) {
-                linePrefix = '○ ';
+                // A fence already in the text stays there, indent included.
+                if (!RegExp(r'^\s*```').hasMatch(line)) {
+                  linePrefix = '``` ';
+                  detectedStyle = BlockType.paragraph;
+                }
+              } else if (RegExp(
+                r'^(?:[-*•][ \t]*)?\[[ \t]*\](?: |$)',
+              ).hasMatch(rawLine.trimLeft())) {
+                final indent = rawLine.substring(
+                  0,
+                  rawLine.length - rawLine.trimLeft().length,
+                );
+                linePrefix = '$indent○ ';
                 line = lineTrimmed.replaceFirst(
-                  RegExp(r'^(?:-\s*)?\[\s*\]\s*'),
+                  RegExp(r'^(?:[-*•]\s*)?\[\s*\]\s*'),
                   '',
                 );
-              } else if (lineTrimmed.startsWith('- [x]') ||
-                  lineTrimmed.startsWith('- [X]') ||
-                  lineTrimmed.startsWith('[x]') ||
-                  lineTrimmed.startsWith('[X]')) {
-                linePrefix = '● ';
+              } else if (RegExp(
+                r'^(?:[-*•][ \t]*)?\[[xX]\](?: |$)',
+              ).hasMatch(rawLine.trimLeft())) {
+                final indent = rawLine.substring(
+                  0,
+                  rawLine.length - rawLine.trimLeft().length,
+                );
+                linePrefix = '$indent● ';
                 line = lineTrimmed.replaceFirst(
-                  RegExp(r'^(?:-\s*)?\[[xX]\]\s*'),
+                  RegExp(r'^(?:[-*•]\s*)?\[[xX]\]\s*'),
                   '',
                 );
-              } else if (lineTrimmed.startsWith('- ') ||
-                  lineTrimmed.startsWith('* ')) {
-                linePrefix = '• ';
+              } else if (RegExp(r'^[-*] (?![\[○●])').hasMatch(lineTrimmed)) {
+                final indent = rawLine.substring(
+                  0,
+                  rawLine.length - rawLine.trimLeft().length,
+                );
+                final bulletGlyph =
+                    RichTextEditingController.getBulletForIndent(indent.length);
+                linePrefix = '$indent$bulletGlyph ';
                 line = lineTrimmed.substring(2);
               }
 
@@ -379,10 +496,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         }
         flushText();
 
-        if (mergedBlocks.isNotEmpty) {
-          _blocks.addAll(mergedBlocks);
-          return;
+        if (mergedBlocks.isEmpty) {
+          mergedBlocks.add(
+            NoteBlock(id: _uuid.v4(), type: BlockType.paragraph, text: ''),
+          );
         }
+        _blocks.addAll(mergedBlocks);
+        return;
       } catch (_) {}
     }
 
@@ -392,6 +512,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final currentTextLines = <String>[];
     final fallbackLineStyles = <int, BlockType>{};
     int currentLineIdx = 0;
+    // True once a non-blank line that is not only tags has been seen.
+    bool hasLeadingContent = false;
 
     void flushLines() {
       if (currentTextLines.isNotEmpty || mergedBlocks.isEmpty) {
@@ -413,6 +535,17 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     while (i < rawLines.length) {
       final line = rawLines[i];
       final lineTrimmed = line.trim();
+      final isFirstContentLine =
+          !hasLeadingContent &&
+          lineTrimmed.isNotEmpty &&
+          !Note.isOnlyTags(lineTrimmed);
+      if (lineTrimmed.isNotEmpty && !Note.isOnlyTags(lineTrimmed)) {
+        hasLeadingContent = true;
+      }
+      // First text line: title style, even when it is a list item or a checkbox.
+      final firstLineStyle = isFirstContentLine
+          ? BlockType.title
+          : BlockType.paragraph;
 
       // Check for Table
       if (lineTrimmed.startsWith('|') && lineTrimmed.endsWith('|')) {
@@ -463,52 +596,62 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         continue;
       }
 
-      if (lineTrimmed.startsWith('### ')) {
+      if (line.startsWith('### ')) {
         final itemText = lineTrimmed.substring(4).trim();
-        fallbackLineStyles[currentLineIdx] = BlockType.h3;
+        fallbackLineStyles[currentLineIdx] = isFirstContentLine
+            ? BlockType.title
+            : BlockType.h3;
         currentTextLines.add(itemText);
         currentLineIdx++;
-      } else if (lineTrimmed.startsWith('## ')) {
+      } else if (line.startsWith('## ')) {
         final itemText = lineTrimmed.substring(3).trim();
-        fallbackLineStyles[currentLineIdx] = BlockType.h2;
+        fallbackLineStyles[currentLineIdx] = isFirstContentLine
+            ? BlockType.title
+            : BlockType.h2;
         currentTextLines.add(itemText);
         currentLineIdx++;
-      } else if (lineTrimmed.startsWith('# ')) {
+      } else if (line.startsWith('# ')) {
         final itemText = lineTrimmed.substring(2).trim();
-        fallbackLineStyles[currentLineIdx] = currentLineIdx == 0
+        fallbackLineStyles[currentLineIdx] = isFirstContentLine
             ? BlockType.title
             : BlockType.h1;
         currentTextLines.add(itemText);
         currentLineIdx++;
-      } else if (lineTrimmed.startsWith('- [ ]') ||
-          lineTrimmed.startsWith('[ ]') ||
+      } else if (RegExp(r'^(?:[-*•][ \t]*)?\[[ \t]*\](?: |$)').hasMatch(line.trimLeft()) ||
           lineTrimmed.startsWith('○ ')) {
+        final indent = line.substring(0, line.length - lineTrimmed.length);
         final itemText = lineTrimmed.replaceFirst(
-          RegExp(r'^(-\s*)?(\[\s*\]|○)\s*'),
+          RegExp(r'^(?:[-*•]\s*)?(\[\s*\]|○)\s*'),
           '',
         );
-        fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
-        currentTextLines.add('○ $itemText');
+        fallbackLineStyles[currentLineIdx] = firstLineStyle;
+        currentTextLines.add(
+          isFirstContentLine ? itemText : '$indent○ $itemText',
+        );
         currentLineIdx++;
-      } else if (lineTrimmed.startsWith('- [x]') ||
-          lineTrimmed.startsWith('- [X]') ||
-          lineTrimmed.startsWith('[x]') ||
-          lineTrimmed.startsWith('[X]') ||
+      } else if (RegExp(r'^(?:[-*•][ \t]*)?\[[xX]\](?: |$)').hasMatch(line.trimLeft()) ||
           lineTrimmed.startsWith('● ')) {
+        final indent = line.substring(0, line.length - lineTrimmed.length);
         final itemText = lineTrimmed.replaceFirst(
-          RegExp(r'^(-\s*)?(\[[xX]\]|●)\s*'),
+          RegExp(r'^(?:[-*•]\s*)?(\[[xX]\]|●)\s*'),
           '',
         );
-        fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
-        currentTextLines.add('● $itemText');
+        fallbackLineStyles[currentLineIdx] = firstLineStyle;
+        currentTextLines.add(
+          isFirstContentLine ? itemText : '$indent● $itemText',
+        );
         currentLineIdx++;
-      } else if (lineTrimmed.startsWith('- ') || lineTrimmed.startsWith('* ')) {
+      } else if (RegExp(r'^[-*] (?![\[○●])').hasMatch(lineTrimmed)) {
         final indent = line.substring(0, line.length - lineTrimmed.length);
         final bulletGlyph = RichTextEditingController.getBulletForIndent(
           indent.length,
         );
-        fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
-        currentTextLines.add('$indent$bulletGlyph ${lineTrimmed.substring(2)}');
+        fallbackLineStyles[currentLineIdx] = firstLineStyle;
+        currentTextLines.add(
+          isFirstContentLine
+              ? lineTrimmed.substring(2)
+              : '$indent$bulletGlyph ${lineTrimmed.substring(2)}',
+        );
         currentLineIdx++;
       } else if (lineTrimmed.startsWith('• ') ||
           lineTrimmed.startsWith('◦ ') ||
@@ -517,20 +660,16 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         final bulletGlyph = RichTextEditingController.getBulletForIndent(
           indent.length,
         );
-        fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
-        currentTextLines.add('$indent$bulletGlyph ${lineTrimmed.substring(2)}');
+        fallbackLineStyles[currentLineIdx] = firstLineStyle;
+        currentTextLines.add(
+          isFirstContentLine
+              ? lineTrimmed.substring(2)
+              : '$indent$bulletGlyph ${lineTrimmed.substring(2)}',
+        );
         currentLineIdx++;
       } else {
-        final isOnlyTags = Note.isOnlyTags(lineTrimmed);
-        if (currentLineIdx == 0 &&
-            !lineTrimmed.startsWith('|') &&
-            !isOnlyTags) {
-          fallbackLineStyles[0] = BlockType.title;
-        } else if (currentLineIdx == 1 &&
-            fallbackLineStyles[0] == BlockType.paragraph &&
-            rawLines.isNotEmpty &&
-            Note.isOnlyTags(rawLines[0])) {
-          fallbackLineStyles[1] = BlockType.title;
+        if (isFirstContentLine && !lineTrimmed.startsWith('|')) {
+          fallbackLineStyles[currentLineIdx] = BlockType.title;
         } else {
           fallbackLineStyles[currentLineIdx] = BlockType.paragraph;
         }
@@ -563,7 +702,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     });
   }
 
-  void _doSerializeAndSave() {
+  void _doSerializeAndSave({String? noteId}) {
     for (final b in _blocks) {
       if (b.controller != null) {
         b.text = b.controller!.text;
@@ -574,16 +713,23 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final blockList = _blocks.map((b) => b.toJson()).toList();
     final jsonString = jsonEncode(blockList);
     _lastSerializedContent = jsonString;
-    context.read<NotesProvider>().updateNoteContent(widget.note.id, jsonString);
+    context.read<NotesProvider>().updateNoteContent(
+      noteId ?? widget.note.id,
+      jsonString,
+    );
   }
 
   // --- External Toolbar Actions ---
 
-  /// Toggles bold formatting in the currently active block
-  void toggleBold() {
+  /// Applies a style to the active text part. The style applies only when the note's text has been shown since the app opened; otherwise the hidden document is just saved.
+  void _toggleStyle(void Function(RichTextEditingController ctrl) toggle) {
     final b = _currentActiveBlock;
     if (b != null) {
-      b.controller?.toggleBold();
+      if (_textShown && _isTextPart(b)) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        _ensureController(b, _getBaseStyleForBlock(b, isDark));
+        toggle(b.controller!);
+      }
       _serializeAndSave(immediate: true);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -592,34 +738,15 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       });
     }
   }
+
+  /// Toggles bold formatting in the currently active block
+  void toggleBold() => _toggleStyle((c) => c.toggleBold());
 
   /// Toggles italic formatting in the currently active block
-  void toggleItalic() {
-    final b = _currentActiveBlock;
-    if (b != null) {
-      b.controller?.toggleItalic();
-      _serializeAndSave(immediate: true);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          b.focusNode?.requestFocus();
-        }
-      });
-    }
-  }
+  void toggleItalic() => _toggleStyle((c) => c.toggleItalic());
 
   /// Toggles underline formatting in the currently active block
-  void toggleUnderline() {
-    final b = _currentActiveBlock;
-    if (b != null) {
-      b.controller?.toggleUnderline();
-      _serializeAndSave(immediate: true);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          b.focusNode?.requestFocus();
-        }
-      });
-    }
-  }
+  void toggleUnderline() => _toggleStyle((c) => c.toggleUnderline());
 
   /// Toggles strikethrough formatting in the currently active block
   void toggleStrikethrough() {
@@ -635,71 +762,97 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     }
   }
 
-  /// Sets block type for currently active block (Aa popup menu)
-  void setBlockType(BlockType newType) {
-    final block = _currentActiveBlock;
+  /// Opens the Block menu under the text section that has the focus, or else the last one used,
+  /// and focuses it: the keyboard shows and the menu closes when the focus leaves that section.
+  void openBlockMenu() => _openBlockMenu(scrolled: false);
+
+  void _openBlockMenu({required bool scrolled}) {
+    final block = _blockMenuTarget;
     if (block == null) return;
-
-    final ctrl = block.controller;
-    if (ctrl != null) {
-      final sel = ctrl.selection;
-      final startOffset = sel.isValid ? sel.start : ctrl.text.length;
-      final endOffset = sel.isValid ? sel.end : startOffset;
-      final startLine = ctrl.getLineIndexAtOffset(startOffset);
-      final endLine = ctrl.getLineIndexAtOffset(endOffset);
-
-      // 1. Remove existing heading / markdown / list prefixes from target lines
-      ctrl.removeLinePrefixes(startLine, endLine);
-
-      // 2. Apply line style
-      if (newType == BlockType.title ||
-          newType == BlockType.h1 ||
-          newType == BlockType.h2 ||
-          newType == BlockType.h3 ||
-          newType == BlockType.paragraph) {
-        for (int l = startLine; l <= endLine; l++) {
-          ctrl.setLineStyle(l, newType);
-        }
-      } else {
-        for (int l = startLine; l <= endLine; l++) {
-          ctrl.setLineStyle(l, BlockType.paragraph);
-        }
-        String prefix = '';
-        switch (newType) {
-          case BlockType.bullet:
-            prefix = '• ';
-            break;
-          case BlockType.checklist:
-            prefix = '○ ';
-            break;
-          case BlockType.numbered:
-            prefix = '1. ';
-            break;
-          case BlockType.quote:
-            prefix = '> ';
-            break;
-          case BlockType.code:
-            prefix = '``` ';
-            break;
-          default:
-            prefix = '';
-            break;
-        }
-        if (prefix.isNotEmpty) {
-          ctrl.applyLinePrefix(prefix);
-        }
-      }
-
-      _serializeAndSave(immediate: true);
+    if (block.focusNode == null) {
+      // The list builds a section, and so its focus node, only when it is on screen. The fallback
+      // target is the last text section, so scroll to the end and open the menu once it is built.
+      // ponytail: assumes an unbuilt target is the last text section; an index-based scroll would cover any.
+      if (scrolled || !_scrollController.hasClients) return;
+      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          block.focusNode?.requestFocus();
-        }
+        if (mounted) _openBlockMenu(scrolled: true);
       });
       return;
     }
+    setState(() {
+      _tagAutocompleteBlockIndex = null;
+      _tagAutocompleteQuery = null;
+      _slashMenuBlock = block;
+    });
+    block.focusNode!.requestFocus();
+  }
 
-    block.type = newType;
+  /// Sets the style of the active text section (Aa popup menu). The section
+  /// stays a paragraph: the style goes to its active line, as in the open note.
+  void setBlockType(BlockType newType) {
+    final block = _currentActiveBlock;
+    if (block == null) return;
+    if (block.type == BlockType.table ||
+        block.type == BlockType.image ||
+        block.type == BlockType.divider) {
+      return;
+    }
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    _ensureController(block, _getBaseStyleForBlock(block, isDark));
+    final ctrl = block.controller!;
+    final sel = ctrl.selection;
+    final startOffset = sel.isValid ? sel.start : ctrl.text.length;
+    final endOffset = sel.isValid ? sel.end : startOffset;
+    final startLine = ctrl.getLineIndexAtOffset(startOffset);
+    final endLine = ctrl.getLineIndexAtOffset(endOffset);
+
+    // 1. Remove existing heading / markdown / list prefixes from target lines
+    ctrl.removeLinePrefixes(startLine, endLine);
+
+    // 2. Apply line style
+    if (newType == BlockType.title ||
+        newType == BlockType.h1 ||
+        newType == BlockType.h2 ||
+        newType == BlockType.h3 ||
+        newType == BlockType.paragraph) {
+      for (int l = startLine; l <= endLine; l++) {
+        ctrl.setLineStyle(l, newType);
+      }
+    } else {
+      for (int l = startLine; l <= endLine; l++) {
+        ctrl.setLineStyle(l, BlockType.paragraph);
+      }
+      String prefix = '';
+      switch (newType) {
+        case BlockType.bullet:
+          prefix = '• ';
+          break;
+        case BlockType.checklist:
+          prefix = '○ ';
+          break;
+        case BlockType.numbered:
+          prefix = '1. ';
+          break;
+        case BlockType.quote:
+          prefix = '> ';
+          break;
+        case BlockType.code:
+          prefix = '``` ';
+          break;
+        default:
+          prefix = '';
+          break;
+      }
+      if (prefix.isNotEmpty) {
+        ctrl.applyLinePrefix(
+          prefix,
+          bulletByIndent: newType == BlockType.bullet,
+        );
+      }
+    }
+
     _serializeAndSave(immediate: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -708,10 +861,42 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     });
   }
 
-  /// Toggles checklist on currently active block or appends a new checklist
+  /// Creates the text controller of a block on first use. Also used by
+  /// setBlockType for a note whose editor was never built.
+  void _ensureController(NoteBlock block, TextStyle baseStyle) {
+    if (block.controller == null) {
+      final initialLineStyles = Map<int, BlockType>.from(block.lineStyles);
+      if (initialLineStyles.isEmpty &&
+          (block.type == BlockType.title ||
+              block.type == BlockType.h1 ||
+              block.type == BlockType.h2 ||
+              block.type == BlockType.h3)) {
+        initialLineStyles[0] = block.type;
+      }
+      block.controller = RichTextEditingController(
+        text: block.text,
+        baseStyle: baseStyle,
+        spans: List.from(block.spans),
+        lineStyles: initialLineStyles,
+      );
+    } else {
+      block.controller!.baseStyle = baseStyle;
+      if (block.controller!.lineStyles.isEmpty &&
+          (block.type == BlockType.title ||
+              block.type == BlockType.h1 ||
+              block.type == BlockType.h2 ||
+              block.type == BlockType.h3)) {
+        block.controller!.lineStyles[0] = block.type;
+      }
+    }
+  }
+
+  /// Toggles checklist on the cursor line of the active text part, or creates an empty one after the active non-text part. When the note's text has never been shown since the app opened, the empty one goes at the end of the document.
   void insertChecklist() {
     final block = _currentActiveBlock;
-    if (block != null && block.controller != null) {
+    if (block != null && _textShown && _isTextPart(block)) {
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      _ensureController(block, _getBaseStyleForBlock(block, isDark));
       block.controller!.toggleChecklistAtCursor();
       _serializeAndSave(immediate: true);
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -728,9 +913,14 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       text: '○ ',
       isChecked: false,
     );
+    final idx = _textShown ? _activeBlockPos : -1;
     setState(() {
-      _blocks.add(newBlock);
-      _activeBlockIndex = _blocks.length - 1;
+      if (idx >= 0) {
+        _blocks.insert(idx + 1, newBlock);
+      } else {
+        _blocks.add(newBlock);
+      }
+      _activeBlock = newBlock;
     });
     _serializeAndSave(immediate: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -804,8 +994,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     if (atIndex != null) {
       insertPos = atIndex.clamp(0, _blocks.length);
     } else {
-      final idx = _activeBlockIndex ?? (_blocks.length - 1);
-      insertPos = (idx >= 0 && idx < _blocks.length) ? idx + 1 : _blocks.length;
+      final idx = _activeBlockPos;
+      insertPos = idx >= 0 ? idx + 1 : _blocks.length;
     }
 
     setState(() {
@@ -818,7 +1008,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
           NoteBlock(id: _uuid.v4(), type: BlockType.paragraph, text: ''),
         );
       }
-      _activeBlockIndex = insertPos;
+      _activeBlock = newBlock;
     });
     _serializeAndSave();
 
@@ -846,11 +1036,11 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       text: '',
     );
 
-    final idx = _activeBlockIndex ?? (_blocks.length - 1);
+    final idx = _activeBlockPos;
     setState(() {
       _blocks.insert(idx + 1, newBlock);
       _blocks.insert(idx + 2, nextParagraph);
-      _activeBlockIndex = idx + 2;
+      _activeBlock = nextParagraph;
     });
     _serializeAndSave();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1028,6 +1218,10 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         block: block,
         isDark: isDark,
         onChanged: () => _serializeAndSave(immediate: true),
+        onArrowOut: (up) => _focusPartAcross(_blocks.indexOf(block), up: up),
+        onFocused: () {
+          _activeBlock = block;
+        },
       );
     }
 
@@ -1044,12 +1238,22 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       );
       block.focusNode!.addListener(() {
         if (block.focusNode!.hasFocus) {
-          _activeBlockIndex = _blocks.indexOf(block);
-        } else if (_tagAutocompleteBlockIndex == _blocks.indexOf(block)) {
-          setState(() {
-            _tagAutocompleteBlockIndex = null;
-            _tagAutocompleteQuery = null;
-          });
+          _activeBlock = block;
+          _lastTextBlock = block;
+        } else {
+          final blockIndex = _blocks.indexOf(block);
+          if (_tagAutocompleteBlockIndex == blockIndex ||
+              identical(_slashMenuBlock, block)) {
+            setState(() {
+              if (_tagAutocompleteBlockIndex == blockIndex) {
+                _tagAutocompleteBlockIndex = null;
+                _tagAutocompleteQuery = null;
+              }
+              if (identical(_slashMenuBlock, block)) {
+                _slashMenuBlock = null;
+              }
+            });
+          }
         }
       });
     } else {
@@ -1057,31 +1261,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
           _handleKeyEvent(event, index, block);
     }
 
-    if (block.controller == null) {
-      final initialLineStyles = Map<int, BlockType>.from(block.lineStyles);
-      if (initialLineStyles.isEmpty &&
-          (block.type == BlockType.title ||
-              block.type == BlockType.h1 ||
-              block.type == BlockType.h2 ||
-              block.type == BlockType.h3)) {
-        initialLineStyles[0] = block.type;
-      }
-      block.controller = RichTextEditingController(
-        text: block.text,
-        baseStyle: baseStyle,
-        spans: List.from(block.spans),
-        lineStyles: initialLineStyles,
-      );
-    } else {
-      block.controller!.baseStyle = baseStyle;
-      if (block.controller!.lineStyles.isEmpty &&
-          (block.type == BlockType.title ||
-              block.type == BlockType.h1 ||
-              block.type == BlockType.h2 ||
-              block.type == BlockType.h3)) {
-        block.controller!.lineStyles[0] = block.type;
-      }
-    }
+    _ensureController(block, baseStyle);
+    _noteIdsWithShownText.add(widget.note.id);
 
     final Widget inputWidget = TextField(
       key: ValueKey('tf_${block.id}'),
@@ -1139,10 +1320,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     }
 
     final Widget blockBody;
-    if (_slashMenuBlockIndex == index) {
+    if (identical(_slashMenuBlock, block)) {
       blockBody = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [contentWidget, _buildSlashMenu(block, index, isDark)],
+        children: [
+          contentWidget,
+          TextFieldTapRegion(child: _buildSlashMenu(block, index, isDark)),
+        ],
       );
     } else {
       blockBody = contentWidget;
@@ -1337,8 +1521,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 tooltip: 'Rimuovi immagine',
                 onPressed: () {
                   setState(() {
-                    _disposeBlock(block);
-                    _blocks.removeAt(index);
+                    _removeBlockAt(index);
                   });
                   _serializeAndSave();
                 },
@@ -1414,12 +1597,11 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
               icon: CupertinoIcons.table,
               label: 'Tabella',
               onTap: () {
+                _removeSlashCommand(block);
                 setState(() {
-                  _disposeBlock(block);
-                  _blocks.removeAt(index);
-                  _slashMenuBlockIndex = null;
+                  _slashMenuBlock = null;
                 });
-                insertTable();
+                insertTable(index + 1);
               },
               isDark: isDark,
             ),
@@ -1541,7 +1723,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final pos = (sel != null && sel.isValid) ? sel.start : val.length;
     final textBeforeCaret = val.substring(0, math.min(pos, val.length));
     final tagMatch = RegExp(
-      r'(?:^|\s)#([a-zA-Z0-9_\-]*)$',
+      r'(?:^|\s)#(' + Note.tagNameChar + r'*)$',
+      unicode: true,
     ).firstMatch(textBeforeCaret);
 
     if (tagMatch != null) {
@@ -1549,7 +1732,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       setState(() {
         _tagAutocompleteBlockIndex = index;
         _tagAutocompleteQuery = query;
-        _slashMenuBlockIndex = null;
+        _slashMenuBlock = null;
       });
     } else {
       if (_tagAutocompleteBlockIndex == index) {
@@ -1561,11 +1744,11 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
       if (val.startsWith('/')) {
         setState(() {
-          _slashMenuBlockIndex = index;
+          _slashMenuBlock = block;
         });
-      } else if (_slashMenuBlockIndex == index) {
+      } else if (identical(_slashMenuBlock, block)) {
         setState(() {
-          _slashMenuBlockIndex = null;
+          _slashMenuBlock = null;
         });
       }
     }
@@ -1670,6 +1853,10 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final matchingTags = allTags
         .where((t) => t.name.toLowerCase().contains(query))
         .toList();
+    // Nothing to propose and nothing typed after the hash: keep it plain text.
+    if (matchingTags.isEmpty && query.isEmpty) {
+      return const SizedBox.shrink();
+    }
     final chipColor = isDark
         ? AppleTheme.accentYellow
         : AppleTheme.accentAmberLight;
@@ -1678,143 +1865,147 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       left: left,
       top: top,
       width: menuWidth,
-      child: Material(
-        color: Colors.transparent,
-        child: Container(
-          decoration: BoxDecoration(
-            color: isDark ? AppleTheme.darkCard : AppleTheme.lightCard,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.35 : 0.12),
-                blurRadius: 16,
-                offset: const Offset(0, 5),
+      child: TextFieldTapRegion(
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            decoration: BoxDecoration(
+              color: isDark ? AppleTheme.darkCard : AppleTheme.lightCard,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(isDark ? 0.35 : 0.12),
+                  blurRadius: 16,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+              border: Border.all(
+                color: isDark
+                    ? AppleTheme.darkDivider
+                    : AppleTheme.lightDivider,
+                width: 0.8,
               ),
-            ],
-            border: Border.all(
-              color: isDark ? AppleTheme.darkDivider : AppleTheme.lightDivider,
-              width: 0.8,
             ),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-                  child: Row(
-                    children: [
-                      Icon(CupertinoIcons.number, size: 12, color: chipColor),
-                      const SizedBox(width: 5),
-                      Text(
-                        'TAG SUGGERITI',
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.6,
-                          color: isDark
-                              ? AppleTheme.darkTextSecondary
-                              : AppleTheme.lightTextSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Divider(
-                  height: 1,
-                  thickness: 0.6,
-                  color: isDark
-                      ? AppleTheme.darkDivider
-                      : AppleTheme.lightDivider,
-                ),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 150),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+                    child: Row(
                       children: [
-                        ...matchingTags.take(5).map((t) {
-                          return CupertinoButton(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            minSize: 32,
-                            borderRadius: BorderRadius.zero,
-                            onPressed: () => _selectAutocompleteTag(
-                              block,
-                              _tagAutocompleteBlockIndex!,
-                              t.name,
-                            ),
-                            child: Row(
-                              children: [
-                                Text(
-                                  '#${t.name}',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: chipColor,
-                                  ),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  '${t.count}',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: isDark
-                                        ? AppleTheme.darkTextSecondary
-                                        : AppleTheme.lightTextSecondary,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }),
-                        if (query.isNotEmpty &&
-                            !matchingTags.any(
-                              (t) => t.name.toLowerCase() == query,
-                            ))
-                          CupertinoButton(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            minSize: 32,
-                            borderRadius: BorderRadius.zero,
-                            onPressed: () => _selectAutocompleteTag(
-                              block,
-                              _tagAutocompleteBlockIndex!,
-                              query,
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  CupertinoIcons.add,
-                                  size: 13,
-                                  color: chipColor,
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    'Crea #$query',
+                        Icon(CupertinoIcons.number, size: 12, color: chipColor),
+                        const SizedBox(width: 5),
+                        Text(
+                          'TAG SUGGERITI',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.6,
+                            color: isDark
+                                ? AppleTheme.darkTextSecondary
+                                : AppleTheme.lightTextSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Divider(
+                    height: 1,
+                    thickness: 0.6,
+                    color: isDark
+                        ? AppleTheme.darkDivider
+                        : AppleTheme.lightDivider,
+                  ),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 150),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          ...matchingTags.take(5).map((t) {
+                            return CupertinoButton(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              minSize: 32,
+                              borderRadius: BorderRadius.zero,
+                              onPressed: () => _selectAutocompleteTag(
+                                block,
+                                _tagAutocompleteBlockIndex!,
+                                t.name,
+                              ),
+                              child: Row(
+                                children: [
+                                  Text(
+                                    '#${t.name}',
                                     style: TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.w600,
                                       color: chipColor,
                                     ),
-                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                ),
-                              ],
+                                  const Spacer(),
+                                  Text(
+                                    '${t.count}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: isDark
+                                          ? AppleTheme.darkTextSecondary
+                                          : AppleTheme.lightTextSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                          if (query.isNotEmpty &&
+                              !matchingTags.any(
+                                (t) => t.name.toLowerCase() == query,
+                              ))
+                            CupertinoButton(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              minSize: 32,
+                              borderRadius: BorderRadius.zero,
+                              onPressed: () => _selectAutocompleteTag(
+                                block,
+                                _tagAutocompleteBlockIndex!,
+                                query,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    CupertinoIcons.add,
+                                    size: 13,
+                                    color: chipColor,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      'Crea #$query',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: chipColor,
+                                      ),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1828,24 +2019,10 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     String cleanText, {
     bool isChecked = false,
   }) {
-    final ctrl = block.controller;
-    if (ctrl != null) {
-      final text = ctrl.text;
-      final sel = ctrl.selection;
-      final pos = sel.isValid ? sel.start : text.length;
-      final lineIdx = ctrl.getLineIndexAtOffset(pos);
-
-      final lines = text.split('\n');
-      if (lineIdx < lines.length) {
-        var lStr = lines[lineIdx];
-        if (lStr.startsWith('/')) {
-          lStr = lStr.replaceFirst(RegExp(r'^/[a-zA-Z0-9]*\s*'), '');
-        }
-        lines[lineIdx] = lStr;
-        ctrl.text = lines.join('\n');
-      }
+    if (block.controller != null) {
+      _removeSlashCommand(block);
       setState(() {
-        _slashMenuBlockIndex = null;
+        _slashMenuBlock = null;
       });
       setBlockType(newType);
       return;
@@ -1868,7 +2045,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       block.controller?.selection = TextSelection.collapsed(
         offset: cleanText.length,
       );
-      _slashMenuBlockIndex = null;
+      _slashMenuBlock = null;
     });
     _serializeAndSave(immediate: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1879,6 +2056,35 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         );
       }
     });
+  }
+
+  /// Removes the slash command from the caret line: the '/' and the letters and digits of any alphabet, then the spaces after it.
+  void _removeSlashCommand(NoteBlock block) {
+    final ctrl = block.controller;
+    if (ctrl == null) return;
+    final text = ctrl.text;
+    final sel = ctrl.selection;
+    final pos = sel.isValid ? sel.start : text.length;
+    final lineIdx = ctrl.getLineIndexAtOffset(pos);
+
+    final lines = text.split('\n');
+    if (lineIdx < lines.length) {
+      var lStr = lines[lineIdx];
+      if (lStr.startsWith('/')) {
+        lStr = lStr.replaceFirst(
+          RegExp(r'^/[\p{L}\p{N}]*\s*', unicode: true),
+          '',
+        );
+      }
+      lines[lineIdx] = lStr;
+      final lineStart = lines
+          .take(lineIdx)
+          .fold<int>(0, (n, l) => n + l.length + 1);
+      ctrl.text = lines.join('\n');
+      // Setting the text drops the selection: put the caret back on this line
+      // so the chosen style applies here, not on the last line of the section.
+      ctrl.selection = TextSelection.collapsed(offset: lineStart);
+    }
   }
 
   KeyEventResult _handleKeyEvent(KeyEvent event, int index, NoteBlock block) {
@@ -2012,31 +2218,55 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       }
     }
 
-    // UP ARROW
+    // UP ARROW: moves to the end of the previous part
     if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-      if (sel.isCollapsed && sel.start == 0 && index > 0) {
-        final prev = _blocks[index - 1];
-        prev.focusNode?.requestFocus();
-        final prevLen = prev.controller?.text.length ?? 0;
-        prev.controller?.selection = TextSelection.collapsed(offset: prevLen);
+      if (sel.isCollapsed &&
+          sel.start == 0 &&
+          _focusPartAcross(index, up: true)) {
         return KeyEventResult.handled;
       }
     }
 
-    // DOWN ARROW
+    // DOWN ARROW: moves to the start of the next part
     if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
       final textLen = ctrl?.text.length ?? 0;
       if (sel.isCollapsed &&
           sel.start == textLen &&
-          index < _blocks.length - 1) {
-        final next = _blocks[index + 1];
-        next.focusNode?.requestFocus();
-        next.controller?.selection = const TextSelection.collapsed(offset: 0);
+          _focusPartAcross(index, up: false)) {
         return KeyEventResult.handled;
       }
     }
 
     return KeyEventResult.ignored;
+  }
+
+  /// Moves the cursor to the end (up) or start (down) of the part next to [index].
+  /// Images and dividers have no caret and are skipped; a table takes the cursor
+  /// in its last (up) or first (down) cell. Returns false when there is no such part.
+  bool _focusPartAcross(int index, {required bool up}) {
+    var i = up ? index - 1 : index + 1;
+    while (i >= 0 && i < _blocks.length) {
+      final part = _blocks[i];
+      if (part.type == BlockType.image || part.type == BlockType.divider) {
+        i += up ? -1 : 1;
+        continue;
+      }
+      if (part.type == BlockType.table) {
+        final focusCell = part.focusCell;
+        if (focusCell == null) return false;
+        focusCell(last: up);
+        return true;
+      }
+      part.focusNode?.requestFocus();
+      final ctrl = part.controller;
+      if (ctrl != null) {
+        ctrl.selection = TextSelection.collapsed(
+          offset: up ? ctrl.text.length : 0,
+        );
+      }
+      return true;
+    }
+    return false;
   }
 
   void _mergeBlockWithPrevious(int index) {
@@ -2088,6 +2318,11 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
     final prevLineCount = '\n'.allMatches(prevText).length;
     final mergedLineStyles = Map<int, BlockType>.from(prevLineStyles);
+    if (prevText.isNotEmpty && prevText.endsWith('\n')) {
+      // The joined line takes the place of the empty last line: its own style
+      // wins, and a body line leaves the line body.
+      mergedLineStyles.remove(prevLineCount);
+    }
     for (final entry in currLineStyles.entries) {
       if (prevText.isNotEmpty && !prevText.endsWith('\n') && entry.key == 0) {
         continue;
@@ -2127,8 +2362,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     }
 
     setState(() {
-      _disposeBlock(current);
-      _blocks.removeAt(index);
+      _removeBlockAt(index);
     });
     _serializeAndSave(immediate: true);
 
@@ -2230,12 +2464,16 @@ class InteractiveTableBlock extends StatefulWidget {
   final NoteBlock block;
   final bool isDark;
   final VoidCallback onChanged;
+  final VoidCallback onFocused;
+  final bool Function(bool up) onArrowOut;
 
   const InteractiveTableBlock({
     super.key,
     required this.block,
     required this.isDark,
     required this.onChanged,
+    required this.onArrowOut,
+    required this.onFocused,
   });
 
   @override
@@ -2250,6 +2488,8 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
   void initState() {
     super.initState();
     _syncMatrix();
+    widget.block.focusCell = _focusEdgeCell;
+    widget.block.hasCellFocus = _hasCellFocus;
   }
 
   @override
@@ -2288,7 +2528,7 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
       final rowNodes = <FocusNode>[];
       for (int c = 0; c < maxCols; c++) {
         final ctrl = TextEditingController(text: rows[r][c]);
-        final node = FocusNode();
+        final node = _newCellFocusNode();
         rowCtrls.add(ctrl);
         rowNodes.add(node);
       }
@@ -2316,8 +2556,12 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
   @override
   void dispose() {
     _disposeMatrix();
+    widget.block.focusCell = null;
+    widget.block.hasCellFocus = null;
     super.dispose();
   }
+
+  bool _hasCellFocus() => _focusNodes.any((row) => row.any((n) => n.hasFocus));
 
   void _addRow() {
     final rows = widget.block.tableData;
@@ -2335,7 +2579,7 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
         colCount,
         (_) => TextEditingController(text: ''),
       );
-      final newNodes = List.generate(colCount, (_) => FocusNode());
+      final newNodes = List.generate(colCount, (_) => _newCellFocusNode());
       _controllers.add(newCtrls);
       _focusNodes.add(newNodes);
     });
@@ -2367,7 +2611,7 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
       }
       for (int r = 0; r < _controllers.length; r++) {
         _controllers[r].add(TextEditingController(text: ''));
-        _focusNodes[r].add(FocusNode());
+        _focusNodes[r].add(_newCellFocusNode());
       }
     });
     widget.onChanged();
@@ -2397,8 +2641,37 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
     widget.onChanged();
   }
 
-  KeyEventResult _handleCellKeyEvent(KeyEvent event, int r, int c) {
+  FocusNode _newCellFocusNode() {
+    final node = FocusNode(
+      onKeyEvent: (n, event) => _handleCellKeyEvent(n, event),
+    );
+    node.addListener(() {
+      if (node.hasFocus) widget.onFocused();
+    });
+    return node;
+  }
+
+  void _focusCell(int r, int c, {required bool caretAtEnd}) {
+    final ctrl = _controllers[r][c];
+    _focusNodes[r][c].requestFocus();
+    ctrl.selection = TextSelection.collapsed(
+      offset: caretAtEnd ? ctrl.text.length : 0,
+    );
+  }
+
+  /// Focuses the last (`last: true`) or first cell when the cursor enters the table.
+  void _focusEdgeCell({required bool last}) {
+    if (_focusNodes.isEmpty) return;
+    final r = last ? _focusNodes.length - 1 : 0;
+    final c = last ? _focusNodes[r].length - 1 : 0;
+    _focusCell(r, c, caretAtEnd: last);
+  }
+
+  KeyEventResult _handleCellKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final r = _focusNodes.indexWhere((row) => row.contains(node));
+    if (r < 0) return KeyEventResult.ignored;
+    final c = _focusNodes[r].indexOf(node);
 
     if (event.logicalKey == LogicalKeyboardKey.tab) {
       final isShift = HardwareKeyboard.instance.isShiftPressed;
@@ -2423,6 +2696,21 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
         }
       }
       return KeyEventResult.handled;
+    }
+
+    // Up/down move between rows of the same column; at the first or last row
+    // the cursor leaves the table for the adjacent part.
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp ||
+        event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      final up = event.logicalKey == LogicalKeyboardKey.arrowUp;
+      final target = up ? r - 1 : r + 1;
+      if (target >= 0 && target < _focusNodes.length) {
+        _focusCell(target, c, caretAtEnd: up);
+        return KeyEventResult.handled;
+      }
+      return widget.onArrowOut(up)
+          ? KeyEventResult.handled
+          : KeyEventResult.ignored;
     }
     return KeyEventResult.ignored;
   }
@@ -2492,39 +2780,35 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
                       horizontal: 10,
                       vertical: 7,
                     ),
-                    child: Focus(
-                      onKeyEvent: (fNode, event) =>
-                          _handleCellKeyEvent(event, rIdx, cIdx),
-                      child: TextField(
-                        controller: ctrl,
-                        focusNode: node,
-                        cursorColor: AppleTheme.accentYellow,
-                        cursorWidth: 2.0,
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: isHeader
-                              ? FontWeight.w700
-                              : FontWeight.w400,
-                          color: isDark
-                              ? AppleTheme.darkTextPrimary
-                              : AppleTheme.lightTextPrimary,
-                        ),
-                        decoration: InputDecoration(
-                          border: InputBorder.none,
-                          isDense: true,
-                          contentPadding: EdgeInsets.zero,
-                          hintText: isHeader ? 'Colonna ${cIdx + 1}' : '',
-                          hintStyle: TextStyle(
-                            fontSize: 13,
-                            color:
-                                (isDark
-                                        ? AppleTheme.darkTextSecondary
-                                        : AppleTheme.lightTextSecondary)
-                                    .withOpacity(0.4),
-                          ),
-                        ),
-                        onChanged: (val) => _onCellChanged(rIdx, cIdx, val),
+                    child: TextField(
+                      controller: ctrl,
+                      focusNode: node,
+                      cursorColor: AppleTheme.accentYellow,
+                      cursorWidth: 2.0,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: isHeader
+                            ? FontWeight.w700
+                            : FontWeight.w400,
+                        color: isDark
+                            ? AppleTheme.darkTextPrimary
+                            : AppleTheme.lightTextPrimary,
                       ),
+                      decoration: InputDecoration(
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                        hintText: isHeader ? 'Colonna ${cIdx + 1}' : '',
+                        hintStyle: TextStyle(
+                          fontSize: 13,
+                          color:
+                              (isDark
+                                      ? AppleTheme.darkTextSecondary
+                                      : AppleTheme.lightTextSecondary)
+                                  .withOpacity(0.4),
+                        ),
+                      ),
+                      onChanged: (val) => _onCellChanged(rIdx, cIdx, val),
                     ),
                   );
                 }),
