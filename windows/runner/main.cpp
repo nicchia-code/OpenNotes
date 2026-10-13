@@ -18,13 +18,13 @@ static void RegisterOpenNotesScheme() {
   const std::wstring command = std::wstring(L"\"") + exe_path + L"\" \"%1\"";
   ::RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\Classes\\opennotes", nullptr,
                     REG_SZ, description.c_str(),
-                    (description.size() + 1) * sizeof(wchar_t));
+                    static_cast<DWORD>((description.size() + 1) * sizeof(wchar_t)));
   ::RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\Classes\\opennotes",
                     L"URL Protocol", REG_SZ, L"", sizeof(wchar_t));
   ::RegSetKeyValueW(HKEY_CURRENT_USER,
                     L"Software\\Classes\\opennotes\\shell\\open\\command",
                     nullptr, REG_SZ, command.c_str(),
-                    (command.size() + 1) * sizeof(wchar_t));
+                    static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
 }
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
