@@ -16,7 +16,7 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
-  FLUTTER_VERSION: '3.41.2'
+  FLUTTER_VERSION: '3.41.6'
 
 jobs:
   version:
