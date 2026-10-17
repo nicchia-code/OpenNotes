@@ -1,6 +1,7 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 - 2026-10-17
+- Requires the Supabase migration `supabase/migrations/20261017131833_cloud_revisions.sql`, applied to the project before this release is used. Clients older than 0.1.0 can no longer write to the cloud and must be updated.
 - Changed sync runs: each run reads only the rows changed since the last revision (a full check while none is known, or when one is asked for), saves carry the revision they are based on, requests made during a run start one further run, and each request to the cloud and each run have a time limit.
 - Fixed the editor: a checkbox marker with no space after it (`[ ]text`) stays plain text for Enter, Tab, Backspace, the checklist button, and taps.
 - Fixed the native launch window size: 1280 × 760 on Linux, Windows, and macOS.
