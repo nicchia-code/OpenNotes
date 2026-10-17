@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../core/models/note_model.dart';
 import '../../core/services/security_service.dart';
@@ -13,6 +14,7 @@ import 'folder_picker.dart';
 import 'note_action_menu.dart';
 
 class NoteActions {
+  static const _fileChannel = MethodChannel('opennotes/file');
   static Future<void> showMobile(
     BuildContext context,
     Note note, {
@@ -87,6 +89,7 @@ class NoteActions {
             return false;
           }
           await provider.toggleLock(note.id);
+          security.relockNote(note.id);
         }
       case NoteMenuAction.duplicate:
         // Copy what is on screen: hand over and write the edit still waiting in the editor.
@@ -160,11 +163,19 @@ class NoteActions {
           }
           return false;
         }
-        if (savedUri != null && context.mounted) {
-          final savedName = NoteActions.savedFileName(savedUri) ?? fileName;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Nota esportata come $savedName')),
-          );
+        if (savedUri != null) {
+          final savedName = await NoteActions.savedFileNameOf(savedUri);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  savedName == null
+                      ? 'Nota esportata.'
+                      : 'Nota esportata come $savedName',
+                ),
+              ),
+            );
+          }
         }
       case NoteMenuAction.trash:
         if (!await provider.moveToTrash(note.id)) return false;
@@ -193,9 +204,29 @@ class NoteActions {
     return false;
   }
 
-  /// Readable file name of a file returned by the save dialog, or null when the
-  /// URI carries none (for example an opaque Android content identifier).
-  // ponytail: last path segment only; content URIs with opaque ids fall back to the proposed name.
+  /// Name of the file the save dialog wrote, or null when none is known. On
+  /// Android the system gives the name of a content URI, also when the URI is
+  /// opaque; otherwise the name comes from the URI itself.
+  static Future<String?> savedFileNameOf(Uri uri) async {
+    if (uri.scheme == 'content') {
+      try {
+        final name = await _fileChannel.invokeMethod<String>(
+          'displayName',
+          uri.toString(),
+        );
+        if (name != null && name.isNotEmpty) return name;
+      } on PlatformException catch (error) {
+        debugPrint('Reading the name of ${uri.path} failed: $error');
+      } on MissingPluginException {
+        // No native handler on this platform: use the name in the URI.
+      }
+    }
+    return savedFileName(uri);
+  }
+
+  /// Readable file name carried by the URI of a file returned by the save
+  /// dialog, or null when the URI carries none (for example an opaque Android
+  /// content identifier).
   static String? savedFileName(Uri uri) {
     final segments = uri.pathSegments.where((s) => s.isNotEmpty);
     if (segments.isEmpty) return null;

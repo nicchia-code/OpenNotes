@@ -97,6 +97,7 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
         if (!setPin) return;
       }
       await provider.toggleLock(currentNote.id);
+      security.relockNote(currentNote.id);
     }
   }
 
@@ -142,6 +143,9 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
       _lastKnownNote = listedNotes.first;
     }
     final currentNote = _lastKnownNote ?? widget.note;
+    // Protected notes show no text, so the Block menu button stays disabled until the note is unlocked.
+    final isProtected =
+        currentNote.isLocked && !security.isNoteUnlocked(currentNote.id);
 
     return CupertinoPageScaffold(
       backgroundColor: bgColor,
@@ -208,7 +212,9 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
               onTable: () => _editorKey.currentState?.insertTable(),
               onDrawing: () => _onDrawing(context),
               onPhoto: () => _onPhoto(context),
-              onBlockMenu: () => _editorKey.currentState?.openBlockMenu(),
+              onBlockMenu: isProtected
+                  ? null
+                  : () => _editorKey.currentState?.openBlockMenu(),
               onSelectBlockType: (type) =>
                   _editorKey.currentState?.setBlockType(type),
               onBold: () => _editorKey.currentState?.toggleBold(),

@@ -118,7 +118,7 @@ void main() {
       createdAt: now,
       updatedAt: now,
     ).copyWith(syncedAt: now));
-    await dbService.permanentlyDeleteNote(noteId);
+    await dbService.deleteNoteRow(noteId);
     await dbService.queueSyncAction(
       entityType: 'note',
       entityId: noteId,

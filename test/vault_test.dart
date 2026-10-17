@@ -51,6 +51,34 @@ void main() {
       expect(Note.extractSnippet('[]'), 'Nessun testo aggiuntivo');
     });
 
+    test('a block with several lines gives its first useful line as title and keeps the rest', () {
+      const content = '[{"type":"paragraph","text":"Spesa\\n○ latte\\n1. pane"}]';
+      expect(Note.extractTitle(content), 'Spesa');
+      expect(Note.extractSnippet(content), 'latte pane');
+    });
+
+    test('a title block starting with a tag-only line takes the title from the next line', () {
+      const content = '[{"type":"paragraph","text":"#lavoro\\n\\nRiunione"}]';
+      expect(Note.extractTitle(content), 'Riunione');
+      expect(Note.extractSnippet(content), 'Nessun testo aggiuntivo');
+    });
+
+    test('a block preview skips tag-only lines and images and tables', () {
+      const content =
+          '[{"type":"title","text":"Titolo"},'
+          '{"type":"paragraph","text":"Riga uno\\n#tag\\nRiga due"},'
+          '{"type":"table","text":"a|b"},'
+          '{"type":"image","text":"attachments/a.png"}]';
+      expect(Note.extractTitle(content), 'Titolo');
+      expect(Note.extractSnippet(content), 'Riga uno Riga due');
+    });
+
+    test('a block document with only a table has no additional text', () {
+      const content = '[{"type":"table","text":"a|b"},{"type":"paragraph","text":"Titolo"}]';
+      expect(Note.extractTitle(content), 'Titolo');
+      expect(Note.extractSnippet(content), 'Nessun testo aggiuntivo');
+    });
+
     test('extractTitle clips to 60 characters, not code units', () {
       final emojis = '😀' * 61;
       expect(Note.extractTitle(emojis), '😀' * 60);

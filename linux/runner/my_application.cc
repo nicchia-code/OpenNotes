@@ -4,19 +4,47 @@
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
 #endif
+#ifdef GDK_WINDOWING_WAYLAND
+#include <gdk/gdkwayland.h>
+#endif
 
 #include "flutter/generated_plugin_registrant.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  FlMethodChannel* window_channel;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+// Answers the window state queries of the Dart side. GTK's maximized flag does
+// not cover a window tiled by the desktop, so the tiled state is read apart.
+static void window_method_call_cb(FlMethodChannel* channel,
+                                  FlMethodCall* method_call,
+                                  gpointer user_data) {
+  if (g_strcmp0(fl_method_call_get_name(method_call), "isTiled") != 0) {
+    fl_method_call_respond_not_implemented(method_call, nullptr);
+    return;
+  }
+  GdkWindow* gdk_window = gtk_widget_get_window(GTK_WIDGET(user_data));
+  bool tiled = gdk_window != nullptr &&
+               (gdk_window_get_state(gdk_window) & GDK_WINDOW_STATE_TILED) != 0;
+  g_autoptr(FlValue) result = fl_value_new_bool(tiled);
+  fl_method_call_respond_success(method_call, result, nullptr);
+}
+
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
-  gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+  GtkWidget* window = gtk_widget_get_toplevel(GTK_WIDGET(view));
+  // Under Wayland, announce client-side decorations before the window is shown,
+  // so the compositor (for example COSMIC) draws no title bar of its own.
+#ifdef GDK_WINDOWING_WAYLAND
+  if (GDK_IS_WAYLAND_DISPLAY(gtk_widget_get_display(window))) {
+    gdk_wayland_window_announce_csd(gtk_widget_get_window(window));
+  }
+#endif
+  gtk_widget_show(window);
 }
 
 // Implements GApplication::activate.
@@ -68,6 +96,13 @@ static void my_application_activate(GApplication* application) {
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
+  g_autoptr(FlStandardMethodCodec) codec = fl_standard_method_codec_new();
+  self->window_channel = fl_method_channel_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(view)),
+      "opennotes/window", FL_METHOD_CODEC(codec));
+  fl_method_channel_set_method_call_handler(
+      self->window_channel, window_method_call_cb, window, nullptr);
+
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
 
@@ -114,6 +149,7 @@ static void my_application_shutdown(GApplication* application) {
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
+  g_clear_object(&self->window_channel);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
 

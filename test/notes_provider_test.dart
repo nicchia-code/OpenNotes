@@ -7,6 +7,7 @@ import 'package:open_notes/core/services/database_service.dart';
 import 'package:open_notes/core/services/sync_service.dart';
 import 'package:open_notes/core/services/vault_service.dart';
 import 'package:open_notes/core/state/notes_provider.dart';
+import 'package:open_notes/core/services/security_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -363,6 +364,45 @@ void main() {
     provider.dispose();
   });
 
+  test('lock toggle writes the waiting text and a running write before changing the lock', () async {
+    final now = DateTime.now();
+    for (final id in ['waiting', 'running']) {
+      await dbService.upsertNote(Note(
+        id: id,
+        title: id,
+        content: '$id old',
+        createdAt: now,
+        updatedAt: now,
+      ));
+    }
+
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+    );
+    await provider.init();
+
+    provider.updateNoteContent('waiting', 'waiting new');
+    await provider.toggleLock('waiting');
+
+    provider.updateNoteContent('running', 'running first');
+    final write = provider.flushOnAppLeavingForeground();
+    await provider.toggleLock('running');
+    await write;
+
+    // Checked at once, before the 400 ms wait of the content save could run.
+    final waiting = await dbService.getNoteById('waiting');
+    expect(waiting!.content, 'waiting new');
+    expect(waiting.isLocked, isTrue);
+
+    final running = await dbService.getNoteById('running');
+    expect(running!.content, 'running first');
+    expect(running.isLocked, isTrue);
+
+    provider.dispose();
+  });
+
   test('deleting a note again in the trash refreshes its trash date only', () async {
     final old = DateTime(2020, 1, 1);
     await dbService.upsertNote(Note(
@@ -430,6 +470,40 @@ void main() {
     expect(provider.selectedNoteId, expected);
     expect(seen, isNotEmpty);
     expect(seen, everyElement(expected));
+
+    provider.dispose();
+  });
+
+  test('deleting a note again in the trash keeps the selection on the renewed note', () async {
+    final now = DateTime.now();
+    for (var i = 0; i < 3; i++) {
+      final id = 'n$i';
+      await dbService.upsertNote(Note(
+        id: id,
+        title: id,
+        content: id,
+        createdAt: now,
+        updatedAt: now.subtract(Duration(minutes: i)),
+        isDeleted: true,
+        deletedAt: now.subtract(Duration(days: 1)),
+      ));
+    }
+
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+    );
+    await provider.init();
+    provider.selectFolder(Folder.trashId);
+    provider.selectNote('n1');
+
+    final ok = await provider.moveToTrash('n1');
+
+    expect(ok, isTrue);
+    expect(provider.selectedNoteId, 'n1');
+    expect(provider.notes.map((n) => n.id), contains('n1'));
+    expect((await dbService.getNoteById('n1'))!.deletedAt!.isAfter(now.subtract(Duration(hours: 1))), isTrue);
 
     provider.dispose();
   });
@@ -1015,6 +1089,101 @@ void main() {
     expect(warnings, 1);
 
     await subscription.cancel();
+    provider.dispose();
+  });
+
+  test('a cloud version that protects a note hides it again when it was unlocked for the session', () async {
+    final security = SecurityService();
+    final now = DateTime.now();
+    await dbService.upsertNote(Note(id: 'open', title: 'Aperta', content: 'segreto', createdAt: now, updatedAt: now));
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+      securityService: security,
+    );
+    await provider.init();
+    security.unlockNote('open');
+    expect(security.isNoteUnlocked('open'), isTrue);
+
+    final applied = syncService.remoteChanges.firstWhere((c) => c is CloudNoteApplied).then((c) => c as CloudNoteApplied);
+    await syncService.applyRemoteNote(Note(
+      id: 'open',
+      title: 'Aperta',
+      content: 'segreto',
+      createdAt: now,
+      updatedAt: now.add(const Duration(minutes: 1)),
+      isLocked: true,
+    ));
+    expect((await applied).isLocked, isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(security.isNoteUnlocked('open'), isFalse);
+    expect(provider.notes.firstWhere((n) => n.id == 'open').isLocked, isTrue);
+    provider.dispose();
+  });
+
+  test('a cloud lock on the open note writes the edit still waiting before hiding the note', () async {
+    final security = SecurityService();
+    final now = DateTime.now();
+    await dbService.upsertNote(Note(id: 'open', title: 'Aperta', content: 'vecchio', createdAt: now, updatedAt: now));
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+      securityService: security,
+    );
+    await provider.init();
+    security.unlockNote('open');
+    provider.updateNoteContent('open', 'testo digitato');
+    expect(provider.hasWaitingContent('open'), isTrue);
+
+    final applied = syncService.remoteChanges.firstWhere((c) => c is CloudNoteApplied).then((c) => c as CloudNoteApplied);
+    await syncService.applyRemoteNote(Note(
+      id: 'open',
+      title: 'Aperta',
+      content: 'segreto',
+      createdAt: now,
+      updatedAt: now.add(const Duration(minutes: 1)),
+      isLocked: true,
+    ));
+    expect((await applied).isLocked, isTrue);
+    // The write of the waiting edit ends after a few database calls: wait for it rather than for a fixed time.
+    for (var i = 0; i < 100 && provider.hasWaitingContent('open'); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+
+    expect(security.isNoteUnlocked('open'), isFalse);
+    expect(provider.hasWaitingContent('open'), isFalse);
+    expect((await dbService.getNoteById('open'))!.content, 'testo digitato');
+    provider.dispose();
+  });
+
+  test('a cloud version without protection keeps a session unlock', () async {
+    final security = SecurityService();
+    final now = DateTime.now();
+    await dbService.upsertNote(Note(id: 'open', title: 'Aperta', content: 'segreto', createdAt: now, updatedAt: now, isLocked: true));
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+      securityService: security,
+    );
+    await provider.init();
+    security.unlockNote('open');
+
+    final applied = syncService.remoteChanges.firstWhere((c) => c is CloudNoteApplied).then((c) => c as CloudNoteApplied);
+    await syncService.applyRemoteNote(Note(
+      id: 'open',
+      title: 'Aperta',
+      content: 'segreto',
+      createdAt: now,
+      updatedAt: now.add(const Duration(minutes: 1)),
+    ));
+    expect((await applied).isLocked, isFalse);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(security.isNoteUnlocked('open'), isTrue);
     provider.dispose();
   });
 }

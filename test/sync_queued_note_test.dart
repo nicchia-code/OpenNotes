@@ -22,6 +22,9 @@ void main() {
     final upserts = <dynamic>[];
     final cloudRows = <String, Map<String, dynamic>>{};
     final cloudDeletes = <String>[];
+    var revisionCounter = 1000;
+    // The cloud gives every row a revision, as its trigger does; rows seeded without one get theirs on first use.
+    void stampRevision(Map<String, dynamic> row) => row['revision'] ??= ++revisionCounter;
     // Test hook: runs once inside the next note upload, as if the user deleted the note meanwhile.
     Future<void> Function()? onNoteUpsert;
     var notesGets = 0;
@@ -31,36 +34,41 @@ void main() {
       final body = await utf8.decoder.bind(request).join();
       final path = request.uri.path;
       final idFilter = request.uri.queryParameters['id']?.replaceFirst('eq.', '');
+      final liveOnly = request.uri.queryParameters['purged_at'] == 'is.null';
       final isTable = path == '/rest/v1/notes' || path == '/rest/v1/folders';
-      if (isTable && request.method == 'POST') {
-        if (path == '/rest/v1/notes') {
-          final row = jsonDecode(body) as Map<String, dynamic>;
-          final hook = onNoteUpsert;
-          onNoteUpsert = null;
-          await hook?.call();
-          upserts.add(row);
-          // Like the server trigger: updating a cloud note that exists bumps its updated_at.
-          if (cloudRows.containsKey(row['id'])) {
-            cloudRows[row['id'] as String] = {
-              ...row,
-              'updated_at': DateTime.now().toUtc().toIso8601String(),
-            };
+      if (path == '/rest/v1/rpc/push_note' && request.method == 'POST') {
+        final hook = onNoteUpsert;
+        onNoteUpsert = null;
+        await hook?.call();
+        // Compare-and-set like the cloud: the write is kept only when the device's base is the row's revision.
+        final call = jsonDecode(body) as Map<String, dynamic>;
+        final row = Map<String, dynamic>.from(call['p_note'] as Map<String, dynamic>);
+        final id = row['id'] as String;
+        final current = cloudRows[id];
+        if (current != null) stampRevision(current);
+        request.response.headers.contentType = ContentType.json;
+        if (call['p_base_revision'] != current?['revision']) {
+          request.response.write(jsonEncode({'status': 'conflict', 'row': current}));
+        } else {
+          row['revision'] = ++revisionCounter;
+          cloudRows[id] = row;
+          if (row['purged_at'] != null) {
+            cloudDeletes.add(id);
+          } else {
+            upserts.add(row);
           }
+          request.response.write(jsonEncode({'status': 'accepted', 'revision': revisionCounter}));
         }
-        request.response.statusCode = 201;
       } else if (isTable && request.method == 'GET') {
         if (path == '/rest/v1/notes') notesGets++;
         final rows = path == '/rest/v1/notes'
-            ? cloudRows.values.where((row) => idFilter == null || row['id'] == idFilter).toList()
+            ? cloudRows.values
+                .where((row) => (idFilter == null || row['id'] == idFilter) && (!liveOnly || row['purged_at'] == null))
+                .toList()
             : <Map<String, dynamic>>[];
+        rows.forEach(stampRevision);
         request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode(rows));
-      } else if (isTable && request.method == 'DELETE') {
-        if (path == '/rest/v1/notes' && idFilter != null) {
-          cloudDeletes.add(idFilter);
-          cloudRows.remove(idFilter);
-        }
-        request.response.statusCode = 204;
       } else {
         request.response.statusCode = 404;
       }
@@ -164,6 +172,8 @@ void main() {
 
     // A never-synced note saved under a normal title, then renamed to a welcome title before any sync.
     // Its queued save must not be sent: the cloud is empty, so the note goes up with its current version.
+    // The cloud holds no note now, so the welcome note is not discarded for the cloud having notes.
+    cloudRows.clear();
     await dbService.upsertNote(Note(
       id: 'renamed-welcome-1',
       title: 'Benvenuto in OpenNotes',
@@ -194,7 +204,7 @@ void main() {
     expect(await dbService.getPendingSyncActions(), isEmpty);
 
     // A never-synced note saved while offline, then deleted here before any sync: its row is purged and the delete
-    // is queued. The queued save is sent, so the note and its text reach the cloud, then the queued delete removes it.
+    // takes the place of the queued save, so the note never reaches the cloud; the queued delete is still sent.
     await dbService.queueSyncAction(
       entityType: 'note',
       entityId: 'deleted-unsynced-1',
@@ -218,9 +228,9 @@ void main() {
 
     await syncService.syncNow();
 
-    expect(upserts.any((u) => u['id'] == 'deleted-unsynced-1' && u['content'] == 'Testo non ancora inviato'), isTrue,
-        reason: 'save of a note never synced here must reach the cloud even when it was deleted here');
-    expect(cloudDeletes, contains('deleted-unsynced-1'), reason: 'the queued delete then removes it from the cloud');
+    expect(upserts.any((u) => u['id'] == 'deleted-unsynced-1'), isFalse,
+        reason: 'the permanent delete replaces the queued save of the note: it never reaches the cloud');
+    expect(cloudDeletes, contains('deleted-unsynced-1'), reason: 'the queued delete is sent');
     expect(await dbService.getPendingSyncActions(), isEmpty);
 
     // Synced here and now gone from the cloud: the queued save is discarded with the note, because this device
@@ -272,7 +282,7 @@ void main() {
       payload: jsonEncode(inFlightNote.toSupabaseJson(userId)),
     );
     onNoteUpsert = () async {
-      await dbService.permanentlyDeleteNote(inFlightNote.id);
+      await dbService.deleteNoteRow(inFlightNote.id);
       await dbService.queueSyncAction(
         entityType: 'note',
         entityId: inFlightNote.id,
@@ -285,7 +295,7 @@ void main() {
 
     expect(cloudDeletes, contains(inFlightNote.id),
         reason: 'delete made while the save was in flight must reach the cloud in the same run');
-    expect(cloudRows.containsKey(inFlightNote.id), isFalse);
+    expect(cloudRows[inFlightNote.id]!['purged_at'], isNotNull, reason: 'the delete leaves a placeholder in the cloud');
     expect(await dbService.getNoteById(inFlightNote.id), isNull);
 
     await syncService.syncNow();
@@ -316,8 +326,8 @@ void main() {
     await syncService.syncNow();
 
     expect(upserts.where((u) => u['id'] == editedNote.id).map((u) => u['content']),
-        ['Versione iniziale', 'Versione modificata'],
-        reason: 'the edit made during the upload must be sent again in the same run');
+        ['Versione modificata'],
+        reason: 'the edit made during the upload reaches the cloud in the same run, as the only accepted write');
     final afterRun = await dbService.getNoteById(editedNote.id);
     expect(afterRun!.content, 'Versione modificata', reason: 'the device must keep the edit');
     expect(afterRun.syncedAt, isNotNull);
@@ -327,6 +337,34 @@ void main() {
     expect((await dbService.getNoteById(editedNote.id))!.content, 'Versione modificata',
         reason: 'the next run must not discard the edit');
     expect(cloudRows[editedNote.id]!['content'], 'Versione modificata');
+    expect(await dbService.getPendingSyncActions(), isEmpty);
+
+    // Note in the trash, synced by this device, now gone from the cloud, with an edit still queued. The edit is
+    // discarded unsent, so the cloud does not recreate the note, and the note is removed from the device.
+    final trashed = Note(
+      id: 'trashed-deleted-in-cloud-1',
+      title: 'Nel cestino',
+      content: 'Testo nel cestino',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      isDeleted: true,
+      deletedAt: DateTime.now(),
+    ).copyWith(syncedAt: DateTime.now());
+    await dbService.upsertNote(trashed);
+    await dbService.queueSyncAction(
+      entityType: 'note',
+      entityId: trashed.id,
+      action: 'upsert',
+      payload: jsonEncode(trashed.copyWith(content: 'Modifica in coda').toSupabaseJson(userId)),
+    );
+
+    await syncService.syncNow();
+    await syncService.syncNow();
+
+    expect(upserts.any((u) => u['id'] == trashed.id), isFalse,
+        reason: 'queued edit of a trashed note deleted in the cloud must not be sent');
+    final removed = await dbService.getNoteById(trashed.id);
+    expect(removed, isNull, reason: 'a trashed note deleted in the cloud is removed from the device');
     expect(await dbService.getPendingSyncActions(), isEmpty);
   });
 }

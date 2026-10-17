@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Changed sync runs: each run reads only the rows changed since the last revision (a full check while none is known, or when one is asked for), saves carry the revision they are based on, requests made during a run start one further run, and each request to the cloud and each run have a time limit.
+- Fixed the editor: a checkbox marker with no space after it (`[ ]text`) stays plain text for Enter, Tab, Backspace, the checklist button, and taps.
 - Fixed the native launch window size: 1280 × 760 on Linux, Windows, and macOS.
 - Fixed the checklist button and the text style menu: all leading symbols of a line are replaced, not only the first.
 - Fixed loading: a checkbox marker with no text after it (`[ ]`, `- [x]`) opens as a checklist item.

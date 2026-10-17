@@ -7,13 +7,16 @@ import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/database_service.dart';
 import 'core/services/security_service.dart';
 import 'core/services/sync_service.dart';
+import 'core/services/sync_triggers.dart';
 import 'core/services/vault_service.dart';
 import 'core/state/notes_provider.dart';
 import 'ui/shell/adaptive_app_shell.dart';
+import 'ui/shell/linux_window_resize_handles.dart';
 import 'ui/theme/apple_theme.dart';
 
 void main() async {
@@ -46,8 +49,15 @@ void main() async {
   final vaultService = VaultService();
   await vaultService.init();
 
-  final syncService = SyncService(dbService, vaultService);
-  await syncService.init();
+  final connectivity = Connectivity();
+  final appVisibility = AppVisibility();
+  final syncTriggers = SyncTriggers(
+    connectivityChanges: connectivity.onConnectivityChanged,
+    checkConnectivity: connectivity.checkConnectivity,
+    visibilityChanges: appVisibility.changes,
+    initiallyVisible: appVisibility.isVisible,
+  );
+  final syncService = SyncService(dbService, vaultService, triggers: syncTriggers);
 
   final authService = AuthService(syncService);
 
@@ -81,6 +91,9 @@ void main() async {
       child: const OpenNotesApp(),
     ),
   );
+
+  // The cloud connection is prepared after the interface appears, so it never delays the start.
+  WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(syncService.init()));
 }
 
 Future<void> _createWelcomeNotes(NotesProvider provider) async {
@@ -287,6 +300,10 @@ class _OpenNotesAppState extends State<OpenNotesApp> {
       theme: AppleTheme.getLightTheme(),
       darkTheme: AppleTheme.getDarkTheme(),
       themeMode: ThemeMode.system,
+      builder: (context, child) {
+        if (kIsWeb || !Platform.isLinux) return child!;
+        return LinuxWindowResizeHandles(child: child!);
+      },
       home: const AdaptiveAppShell(),
     );
   }

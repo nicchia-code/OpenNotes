@@ -12,11 +12,12 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 ## note-content-save
 
 - La scrittura su disco parte 400 ms dopo l'ultima consegna. C'è un solo timer, condiviso da tutte le note. Quando l'app va in secondo piano o si chiude (anche chiudendo la finestra desktop), la scrittura in attesa parte subito.
+- Prima di fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare (anche con «Annulla») o spostare in un'altra cartella una nota: l'editor consegna subito il testo ancora in attesa, la scrittura in attesa parte subito, anche se riguarda un'altra nota, il comando attende anche una scrittura già in corso e poi agisce sulla versione appena salvata.
 - La scrittura riporta sulla nota già salvata solo contenuto, titolo, tag, anteprima e data di modifica; fissaggio, protezione, cartella e cestino cambiati durante l'attesa restano.
 - Titolo ricalcolato a ogni consegna:
-  - è la prima riga del primo blocco con testo, escluse immagini e tabelle;
-  - ha la precedenza un blocco di tipo `title`;
-  - i blocchi fatti solo di tag vengono saltati;
+  - è la prima riga utile del primo blocco che ne ha una, escluse immagini e tabelle; una riga è utile se non è vuota, non è fatta di soli tag e ha ancora testo dopo aver tolto i «#» iniziali; nel testo Markdown è la prima riga non vuota che non sia fatta di soli tag;
+  - ha la precedenza un blocco di tipo `title` che abbia una riga utile;
+  - le righe fatte di soli tag vengono saltate anche dentro un blocco che ha altro testo;
   - perde i «#» iniziali e si taglia a 60 caratteri;
   - se non c'è, vale «Nuova nota».
 - Tag: ogni «#nome» (lettere e cifre di qualunque alfabeto, «_», «-») all'inizio del testo o dopo uno spazio o una parentesi, sia nel testo sia nelle celle delle tabelle. Si salvano in minuscolo, senza duplicati e in ordine alfabetico.
@@ -66,7 +67,7 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
   - se la prima sezione è vuota, prende tipo, spunta e stili di riga della seconda;
   - altrimenti, una prima sezione di tipo titolo o intestazione diventa corpo;
   - il cursore va nel punto di giunzione.
-- Una versione remota viene caricata solo se è diversa dall'ultimo contenuto consegnato dall'editor e nessuna riga ha il focus.
+- Una versione remota viene caricata solo se è diversa dall'ultimo contenuto consegnato dall'editor e non ci sono modifiche in attesa di essere consegnate. Anche con una riga a fuoco il cursore resta nella stessa riga e posizione se esistono ancora, altrimenti va alla fine della riga più vicina.
 - Tabelle:
   - una nuova tabella contiene «Colonna 1», «Colonna 2» / «Elemento 1», «Elemento 2»;
   - «+ Riga» aggiunge una riga in fondo e «+ Colonna» una colonna a destra;
@@ -96,12 +97,13 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
   - citazioni e righe monospazio guadagnano o perdono 2 spazi di rientro prima del segno e restano dello stesso tipo, anche alla riapertura della nota;
   - righe normali: Tab aggiunge 2 spazi e Maiusc+Tab ne toglie fino a 2.
 - Checklist:
-  - il tocco conta se cade entro il prefisso più un carattere; tra due cambi fatti con un tocco devono passare almeno 250 ms;
+  - il tocco conta solo se cade sul cerchio o sul carattere subito dopo (lo spazio del prefisso), non sulle lettere del testo; tra due cambi fatti con un tocco devono passare almeno 250 ms;
   - il pulsante checklist alterna «○»/«●» (anche «[ ]»/«[x]») sulla riga del cursore; altrimenti mette davanti «○ » togliendo gli altri prefissi.
 - Stile da «Aa» o dal menu rapido, sulle righe selezionate:
   - prima si tolgono i prefissi esistenti, solo se seguiti da uno spazio: «# », «## », «### », simboli di elenco o checklist, «- », «* », «[ ] », «[x] », «N. », «> »; «```» si toglie insieme all'eventuale spazio che lo segue. Un segno senza spazio («#lavoro», «-5 gradi», «1.5 volte», «>x») resta nel testo. Lo stesso vale per il pulsante checklist quando mette «○ »;
   - titolo, intestazioni e corpo diventano stile di riga;
-  - elenco puntato, checklist, numerato, citazione e monospazio diventano rispettivamente il prefisso «• », «○ », «1. », «> », «``` », con stile di riga corpo.
+  - elenco puntato diventa il prefisso con il simbolo del livello di rientro di ogni riga («• », «◦ » o «▪ »), con stile di riga corpo;
+  - checklist, numerato, citazione e monospazio diventano rispettivamente il prefisso «○ », «1. », «> », «``` », con stile di riga corpo.
 - Stili di riga dopo una modifica:
   - le righe prima della modifica tengono il loro stile e quelle dopo scalano della differenza di righe;
   - se si inseriscono a capo all'inizio di una riga senza cancellare nulla, gli stili da quella riga in giù scendono e le nuove righe sono corpo;
@@ -112,7 +114,7 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 
 - Si sta scrivendo un tag quando il testo prima del cursore finisce con «#» seguito da lettere e cifre di qualunque alfabeto, «_» o «-» (anche nessuno), all'inizio o dopo uno spazio.
 - Si mostrano al massimo 5 suggerimenti: i tag esistenti il cui nome contiene il testo digitato, senza distinguere maiuscole e minuscole. Scegliere un tag sostituisce il testo dal «#» al cursore con «#nome » e il cursore va dopo lo spazio.
-- Il menu rapido compare quando il testo dell'intera sezione comincia con «/», oppure, sul telefono, quando si tocca il suo pulsante sulla barra sopra la tastiera; si chiude quando il focus lascia la sezione sotto cui è aperto. Scegliendo una voce, anche «Tabella», si toglie dalla riga corrente «/» seguito da lettere e cifre di qualunque alfabeto e dagli spazi successivi, se la riga comincia con «/»; il resto del testo resta e la tabella va dopo la sezione.
+- Il menu rapido compare quando il testo dell'intera sezione comincia con «/», oppure, sul telefono, quando si tocca il suo pulsante sulla barra sopra la tastiera; si chiude quando il focus lascia la sezione sotto cui è aperto, oppure appena una modifica del testo lascia la sezione senza «/» iniziale mentre non si sta scrivendo un tag, anche se il menu era stato aperto dal pulsante. Scegliendo una voce, anche «Tabella», si toglie dalla riga corrente «/» seguito da lettere e cifre di qualunque alfabeto e dagli spazi successivi, se la riga comincia con «/»; il resto del testo resta e la tabella va dopo la sezione.
 
 ## drawing-canvas
 

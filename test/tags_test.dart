@@ -80,8 +80,25 @@ This project uses #dart and #flutter for cross-platform desktop.
     test('extractTagsFromContent keeps accented letters in tags', () {
       const text = 'Una #perché e #città, poi #Ñandú.';
       final tags = Note.extractTagsFromContent(text);
-      expect(tags, ['città', 'perché', 'ñandú']);
+      expect(tags, ['città', 'ñandú', 'perché']);
       expect(Note.isOnlyTags('#perché #città'), isTrue);
+    });
+
+    test('extractTagsFromContent sorts accented tags among their base letters', () {
+      const text = 'Note #zebra #città #cibo #èra #dado';
+      expect(Note.extractTagsFromContent(text), ['cibo', 'città', 'dado', 'èra', 'zebra']);
+    });
+
+    test('storedTags sorts accented tags among their base letters', () {
+      final note = Note(
+        id: 'n',
+        title: 'N',
+        content: '',
+        tags: const ['zebra', '#Città', 'cibo', 'èra'],
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+      );
+      expect(note.storedTags, ['cibo', 'città', 'èra', 'zebra']);
     });
 
     test('extractTagsFromContent extracts tags written in non-Latin alphabets', () {
@@ -236,6 +253,17 @@ This project uses #dart and #flutter for cross-platform desktop.
       expect(notes.map((n) => n.id), ['stored']);
     });
 
+    test('tag list sorts accented tags with their base letter', () async {
+      final service = await openWith([
+        {'id': 'a', 'title': 'A', 'content': '', 'tags': '["zen"]'},
+        {'id': 'b', 'title': 'B', 'content': '', 'tags': '["città"]'},
+        {'id': 'c', 'title': 'C', 'content': '', 'tags': '["èvento"]'},
+        {'id': 'd', 'title': 'D', 'content': '', 'tags': '["cane"]'},
+      ]);
+      final tags = await service.getAllTags();
+      expect(tags.map((t) => t.name), ['cane', 'città', 'èvento', 'zen']);
+    });
+
     test('tag filter treats underscore literally, not as a wildcard', () async {
       final service = await openWith([
         {'id': 'underscore', 'title': 'Underscore', 'content': '', 'tags': '["a_b"]'},
@@ -263,17 +291,18 @@ This project uses #dart and #flutter for cross-platform desktop.
       expect(notes.map((n) => n.id), ['cap']);
     });
 
-    test('text search matches content of locked notes without unlocking', () async {
+    test('text search matches only title and tags of locked notes until unlocked', () async {
       final service = await openWith([
         {'id': 'secret', 'title': 'Diario', 'content': 'parola segreta', 'tags': '["privato"]', 'is_locked': 1},
         {'id': 'open', 'title': 'Aperta', 'content': 'parola segreta', 'tags': '[]'},
       ]);
+      expect((await service.getNotes(searchQuery: 'segreta')).map((n) => n.id), ['open']);
+      expect((await service.getNotes(searchQuery: 'diario')).map((n) => n.id), ['secret']);
+      expect((await service.getNotes(searchQuery: 'privato')).map((n) => n.id), ['secret']);
       expect(
-        (await service.getNotes(searchQuery: 'segreta')).map((n) => n.id),
+        (await service.getNotes(searchQuery: 'segreta', isUnlocked: (id) => id == 'secret')).map((n) => n.id),
         unorderedEquals(['secret', 'open']),
       );
-      expect((await service.getNotes(searchQuery: 'diario')).map((n) => n.id), ['secret']);
-      expect((await service.getNotes(searchQuery: 'privato')).map((n) => n.id), isEmpty);
     });
 
     test('list orders by instant when local and UTC modification dates are mixed', () async {

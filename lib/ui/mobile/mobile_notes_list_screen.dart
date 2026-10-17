@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../core/models/folder_model.dart';
 import '../../core/models/note_model.dart';
+import '../../core/services/sync_service.dart';
 import '../../core/state/notes_provider.dart';
 import '../../core/services/security_service.dart';
 import '../notes_list/note_card.dart';
@@ -62,14 +63,7 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
     if (provider.selectedFolderId == Folder.allNotesId) return 'Tutte le note';
     if (provider.selectedFolderId == Folder.defaultNotesId) return 'Note';
 
-    try {
-      final folder = provider.folders.firstWhere(
-        (f) => f.id == provider.selectedFolderId,
-      );
-      return folder.name;
-    } catch (_) {
-      return 'Note';
-    }
+    return provider.selectedFolderName ?? 'Note';
   }
 
   void _showNoteContextMenu(
@@ -147,6 +141,7 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<NotesProvider>();
+    final sync = context.watch<SyncService>();
     _syncSearchField(provider.searchQuery);
     final notes = provider.notes;
     final tags = provider.tags;
@@ -278,51 +273,65 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
 
             // Notes List
             Expanded(
-              child: notes.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            CupertinoIcons.doc_text,
-                            size: 48,
-                            color: secondaryTextColor.withValues(alpha: 0.4),
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            provider.searchQuery.isNotEmpty
-                                ? 'Nessun risultato'
-                                : 'Nessuna nota',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: secondaryTextColor,
-                              fontWeight: FontWeight.w500,
+              child: CustomScrollView(
+                physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
+                slivers: [
+                  // Only with a connected account: without one the gesture is not available.
+                  if (sync.isAuthenticated)
+                    CupertinoSliverRefreshControl(onRefresh: sync.syncNow),
+                  if (notes.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              CupertinoIcons.doc_text,
+                              size: 48,
+                              color: secondaryTextColor.withValues(alpha: 0.4),
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 12),
+                            Text(
+                              provider.searchQuery.isNotEmpty
+                                  ? 'Nessun risultato'
+                                  : 'Nessuna nota',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: secondaryTextColor,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     )
-                  : ListView(
+                  else
+                    SliverPadding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
-                      children: [
-                        // Pinned notes section
-                        if (pinnedNotes.isNotEmpty) ...[
-                          _buildSectionHeader('FISSATE', secondaryTextColor),
-                          ...pinnedNotes.map(
-                            (note) => _buildDismissibleNoteCard(note, provider),
-                          ),
-                        ],
+                      sliver: SliverList.list(
+                        children: [
+                          // Pinned notes section
+                          if (pinnedNotes.isNotEmpty) ...[
+                            _buildSectionHeader('FISSATE', secondaryTextColor),
+                            ...pinnedNotes.map(
+                              (note) => _buildDismissibleNoteCard(note, provider),
+                            ),
+                          ],
 
-                        // Regular notes section
-                        if (unpinnedNotes.isNotEmpty) ...[
-                          if (pinnedNotes.isNotEmpty)
-                            _buildSectionHeader('NOTE', secondaryTextColor),
-                          ...unpinnedNotes.map(
-                            (note) => _buildDismissibleNoteCard(note, provider),
-                          ),
+                          // Regular notes section
+                          if (unpinnedNotes.isNotEmpty) ...[
+                            if (pinnedNotes.isNotEmpty)
+                              _buildSectionHeader('NOTE', secondaryTextColor),
+                            ...unpinnedNotes.map(
+                              (note) => _buildDismissibleNoteCard(note, provider),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
+                ],
+              ),
             ),
 
             // Bottom Toolbar: Note counter & Nuova nota
@@ -454,6 +463,7 @@ class _MobileNotesListScreenState extends State<MobileNotesListScreen> {
             provider.selectNote(note.id);
             widget.onNoteSelected?.call(note);
           },
+          isSetAside: provider.isNoteSetAside(note.id),
           onTagTap: (tag) => provider.selectTag(tag),
         ),
       ),

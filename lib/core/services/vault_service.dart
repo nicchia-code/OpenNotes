@@ -110,12 +110,24 @@ class VaultService {
   /// deletes the file.
   Future<void> deleteNoteFileIfUnused(DatabaseService db, String? filePath, {String? exceptNoteId}) async {
     if (filePath == null) return;
-    final remaining = await db.getNotesWrittenTo(filePath, exceptNoteId: exceptNoteId);
+    final remaining = <Note>[];
+    for (final note in await db.getNotesWithWrittenFile(exceptNoteId: exceptNoteId)) {
+      final otherPath = note.filePath!;
+      if (otherPath == filePath || await _isSameFile(otherPath, filePath)) remaining.add(note);
+    }
     if (remaining.isEmpty) {
       await deleteNoteFile(filePath);
       return;
     }
-    await File(filePath).writeAsString(serializeNoteToMarkdown(remaining.first));
+    await File(remaining.first.filePath!).writeAsString(serializeNoteToMarkdown(remaining.first));
+  }
+
+  /// Tells whether two recorded paths name the same file on disk. Paths that differ only
+  /// by letter case name one file on case-insensitive systems, so the text of the path is
+  /// not enough. A path with no file behind it names no file shared with another.
+  Future<bool> _isSameFile(String a, String b) async {
+    if (!await File(a).exists() || !await File(b).exists()) return false;
+    return FileSystemEntity.identical(a, b);
   }
 
   /// Saves an image or drawing bytes to attachments/ and returns relative path.

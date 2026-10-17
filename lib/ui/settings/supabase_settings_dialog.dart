@@ -6,6 +6,20 @@ import '../../core/services/auth_service.dart';
 import '../../core/services/sync_service.dart';
 import '../../core/services/vault_service.dart';
 import '../theme/apple_theme.dart';
+import '../sync/sync_status_label.dart';
+import '../sync/sync_state_glyph.dart';
+
+/// Text the settings window shows when the sign-in sync run ends: success, or its failure with the retry wait.
+String signInSyncOutcomeMessage(SyncErrorCategory? failure, DateTime? retryDueAt, {DateTime? now}) {
+  if (failure == null) return 'Sincronizzazione completata con successo.';
+  final label = syncErrorCategoryLabel(failure);
+  if (retryDueAt == null) return 'Sincronizzazione non riuscita: $label.';
+  final seconds = syncRetryCountdown(retryDueAt, now: now);
+  return 'Sincronizzazione non riuscita: $label. Nuovo tentativo tra $seconds s';
+}
+
+/// Where the sign-in sync run stands in the settings window: none, running after the sign-in, or finished.
+enum _SignInSync { none, running, finished }
 
 /// Modal for managing Supabase Cloud Sync, Authentication, and Vault location.
 class SupabaseSettingsDialog extends StatefulWidget {
@@ -19,11 +33,52 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
   bool _isConnecting = false;
   String? _statusMessage;
   bool _isError = false;
+  _SignInSync _signInSync = _SignInSync.none;
+  Timer? _ticker;
+  SyncService? _listenedSync;
+  /// Changes the sync has set aside, listed under "Non sincronizzate" in the signed-in view.
+  List<SetAsideChange> _setAside = const [];
+  int _setAsideLoad = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // The status lines (retry countdown, time since the last sync) are redrawn each second.
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The list of set-aside changes follows every change of the SyncService, as the rest of the window does.
+    final sync = context.read<SyncService>();
+    if (identical(sync, _listenedSync)) return;
+    _listenedSync?.removeListener(_reloadSetAside);
+    _listenedSync = sync..addListener(_reloadSetAside);
+    _reloadSetAside();
+  }
+
+  /// Reads the changes the sync has set aside; a read that is overtaken by a later one is dropped.
+  Future<void> _reloadSetAside() async {
+    final load = ++_setAsideLoad;
+    final changes = await _listenedSync!.setAsideChanges();
+    if (mounted && load == _setAsideLoad) setState(() => _setAside = changes);
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    _listenedSync?.removeListener(_reloadSetAside);
+    super.dispose();
+  }
 
   Future<void> _handleSignOut(AuthService auth) async {
     setState(() {
       _isConnecting = true;
       _statusMessage = 'Disconnessione in corso...';
+      _signInSync = _SignInSync.none;
       _isError = false;
     });
 
@@ -49,6 +104,7 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
       _isConnecting = true;
       _statusMessage = 'Apertura browser per autenticazione Google...';
       _isError = false;
+      _signInSync = _SignInSync.none;
     });
 
     try {
@@ -60,7 +116,7 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
         });
       } else if (mounted) {
         final sync = context.read<SyncService>();
-        await _waitForReturn(sync);
+        await _waitUntil(sync, () => !sync.isAwaitingLogin);
         if (!mounted) return;
         if (!sync.isAuthenticated) {
           setState(() {
@@ -70,15 +126,15 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
           return;
         }
         setState(() {
-          _statusMessage = 'Accesso completato! Sincronizzazione in corso...';
-          _isError = false;
+          _statusMessage = null;
+          _signInSync = _SignInSync.running;
         });
-        await sync.syncNow();
-        if (mounted) {
-          setState(() {
-            _statusMessage = 'Sincronizzazione completata con successo.';
-          });
-        }
+        // The run the sign-in started is awaited, not repeated: it is already running when the wait for the
+        // sign-in ends, and the window waits for its real end, including the retry it schedules when it fails.
+        await _waitUntil(sync, () => sync.isSyncing);
+        await _waitUntil(sync, () => !sync.isSyncing);
+        if (!mounted) return;
+        setState(() => _signInSync = _SignInSync.finished);
       }
     } catch (e) {
       if (mounted) {
@@ -96,12 +152,23 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
     }
   }
 
-  /// Waits until the return from Google ends Awaiting login (success, error, or the local server closed).
-  Future<void> _waitForReturn(SyncService sync) async {
-    if (!sync.isAwaitingLogin) return;
+  /// The sign-in sync line, read live from the SyncService: a run that fails or retries later is shown as it happens.
+  ({String text, bool isError})? _signInSyncLine(SyncService sync) => switch (_signInSync) {
+        _SignInSync.none => null,
+        _SignInSync.running => (text: 'Accesso completato! Sincronizzazione in corso...', isError: false),
+        _SignInSync.finished when sync.isSyncing => (text: syncStatusText(SyncRunState.running), isError: false),
+        _SignInSync.finished => (
+            text: signInSyncOutcomeMessage(sync.lastFailure, sync.retryDueAt),
+            isError: sync.lastFailure != null,
+          ),
+      };
+
+  /// Waits until [isDone] holds, checked again after every change of the SyncService.
+  Future<void> _waitUntil(SyncService sync, bool Function() isDone) async {
+    if (isDone()) return;
     final done = Completer<void>();
     void onChange() {
-      if (!sync.isAwaitingLogin && !done.isCompleted) done.complete();
+      if (isDone() && !done.isCompleted) done.complete();
     }
 
     sync.addListener(onChange);
@@ -118,6 +185,12 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
     final auth = context.watch<AuthService>();
     final vault = context.read<VaultService>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final retryDueAt = sync.retryDueAt;
+    final signInLine = _signInSyncLine(sync);
+    final statusText = sync.signInError != null
+        ? 'Accesso non completato: ${sync.signInError}'
+        : (signInLine?.text ?? _statusMessage);
+    final statusIsError = sync.signInError != null || (signInLine?.isError ?? _isError);
 
     return Dialog(
       backgroundColor: isDark ? AppleTheme.darkSidebar : AppleTheme.lightSidebar,
@@ -229,6 +302,103 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    SyncStateGlyph(
+                      state: sync.runState,
+                      color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      syncStatusText(
+                        sync.runState,
+                        failure: sync.lastFailure,
+                        retryInSeconds: retryDueAt == null ? 0 : syncRetryCountdown(retryDueAt),
+                      ),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  syncLastSyncedLabel(sync.lastSyncedAt),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Modifiche in attesa: ${sync.pendingChangeCount}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                  ),
+                ),
+                if (sync.runState == SyncRunState.waitingToRetry && retryDueAt != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    '${syncErrorCategoryLabel(sync.lastFailure ?? SyncErrorCategory.unexpected)}. '
+                    'Nuovo tentativo tra ${syncRetryCountdown(retryDueAt)} s',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: CupertinoColors.destructiveRed),
+                  ),
+                ],
+                if (_setAside.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'NON SINCRONIZZATE',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  for (final change in _setAside)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: isDark ? AppleTheme.darkCard : AppleTheme.lightCard,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: isDark ? AppleTheme.darkDivider : AppleTheme.lightDivider),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(change.title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'Il cloud ha rifiutato la modifica',
+                            style: TextStyle(fontSize: 12, color: CupertinoColors.destructiveRed),
+                          ),
+                          Row(
+                            children: [
+                              CupertinoButton(
+                                padding: EdgeInsets.zero,
+                                child: const Text('Riprova', style: TextStyle(fontSize: 13, color: CupertinoColors.activeBlue)),
+                                onPressed: () => sync.retrySetAsideChange(change.entityType, change.entityId),
+                              ),
+                              if (change.cloudHasCopy) ...[
+                                const SizedBox(width: 16),
+                                CupertinoButton(
+                                  padding: EdgeInsets.zero,
+                                  child: const Text(
+                                    'Usa la versione del cloud',
+                                    style: TextStyle(fontSize: 13, color: CupertinoColors.activeBlue),
+                                  ),
+                                  onPressed: () => sync.useCloudVersion(change.entityType, change.entityId),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
                 const SizedBox(height: 14),
                 CupertinoButton(
                   color: AppleTheme.accentYellow,
@@ -278,14 +448,12 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
                 ),
               ],
 
-              if (sync.signInError != null || _statusMessage != null) ...[
+              if (statusText != null) ...[
                 const SizedBox(height: 14),
                 Text(
-                  sync.signInError != null ? 'Accesso non completato: ${sync.signInError}' : _statusMessage!,
+                  statusText,
                   style: TextStyle(
-                    color: sync.signInError != null || _isError
-                        ? CupertinoColors.destructiveRed
-                        : CupertinoColors.activeGreen,
+                    color: statusIsError ? CupertinoColors.destructiveRed : CupertinoColors.activeGreen,
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
                   ),

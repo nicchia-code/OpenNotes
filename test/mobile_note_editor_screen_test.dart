@@ -261,6 +261,79 @@ void main() {
   );
 
   testWidgets(
+    'protecting a note unlocked earlier in the session shows the placeholder again',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      late DatabaseService db;
+      late VaultService vault;
+      late SyncService sync;
+      late NotesProvider provider;
+      late SecurityService security;
+      late Directory tempDir;
+      final note = Note(
+        id: 'mobile-relock-session-note',
+        title: 'Nota',
+        content: '# Nota\nTesto',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      await tester.runAsync(() async {
+        db = DatabaseService();
+        await db.init(inMemory: true);
+        tempDir = await Directory.systemTemp.createTemp('mobile_editor_relock_');
+        vault = VaultService();
+        await vault.init(customPath: tempDir.path);
+        sync = SyncService(db, vault);
+        security = SecurityService();
+        await security.init();
+        await security.setMasterPin('1234');
+        provider = NotesProvider(
+          dbService: db,
+          vaultService: vault,
+          syncService: sync,
+        );
+        await db.upsertNote(note);
+        await provider.init();
+      });
+      // Unlocked earlier in this session; its protection was then removed.
+      security.unlockNote(note.id);
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Material(child: MobileNoteEditorScreen(note: note)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Questa nota è protetta'), findsNothing);
+
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(CupertinoIcons.lock));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Questa nota è protetta'), findsOneWidget);
+      final saved = await tester.runAsync(() => db.getNoteById(note.id));
+      expect(saved?.isLocked, isTrue);
+
+      provider.dispose();
+      await tester.runAsync(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+    },
+  );
+
+  testWidgets(
     'protected editor stays on the placeholder after the note is trashed',
     (tester) async {
       SharedPreferences.setMockInitialValues({});

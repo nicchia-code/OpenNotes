@@ -4,7 +4,7 @@ description: Serve quando si legge o si modifica la struttura della nota nel dat
 # Notes data
 
 ## note
-- Database locale (SQLite, file `opennotes.db`), tabella `notes`, versione schema 1:
+- Database locale (SQLite, file `opennotes.db`), tabella `notes`, versione schema 2:
   - `id`: testo, chiave primaria; UUID v4 generato alla creazione.
   - `title`: testo obbligatorio; titolo mostrato negli elenchi.
   - `content`: testo obbligatorio; documento a blocchi serializzato come elenco JSON oppure testo Markdown semplice.
@@ -14,6 +14,7 @@ description: Serve quando si legge o si modifica la struttura della nota nel dat
   - `deleted_at`: data di spostamento nel cestino (ISO 8601), vuota se la nota non è nel cestino.
   - `created_at`, `updated_at`: date di creazione e ultima modifica (ISO 8601), obbligatorie.
   - `synced_at`: data dell'ultima sincronizzazione con il cloud; vuota se la nota non è mai stata sincronizzata.
+  - `cloud_revision`: intero facoltativo, l'ultima revisione del cloud vista per la nota; vuota se il dispositivo non ne ha mai vista una.
   - `file_path`: percorso del file Markdown della nota nell'archivio (vault), facoltativo.
   - Indici su cartella, fissaggio, cestino e data di modifica.
 - L'anteprima (snippet) non è salvata: viene ricalcolata dal contenuto quando la nota viene letta o quando cambiano contenuto o protezione.
@@ -22,7 +23,8 @@ description: Serve quando si legge o si modifica la struttura della nota nel dat
   - stessi campi `id`, `title` (predefinito "Nuova nota"), `content` (predefinito vuoto), `folder_id` (facoltativo, predefinito `notes`), `is_pinned`, `is_locked`, `is_deleted` (booleani, predefiniti falso), `deleted_at`, `created_at`, `updated_at` (timestamptz);
   - `tags` è un array di testo, predefinito vuoto;
   - `user_id`: UUID obbligatorio del proprietario, riferito all'utente autenticato e cancellato a cascata con esso;
-  - non esistono `synced_at` né `file_path`, che restano solo sul dispositivo;
-  - `updated_at` viene riscritto dal server con l'istante corrente a ogni aggiornamento della riga;
-  - accesso consentito solo al proprietario (Row Level Security su lettura, inserimento, modifica, cancellazione); tabella pubblicata sul canale realtime.
+  - `revision`: bigint assegnato dal server a ogni scrittura; `purged_at`: timestamptz, valorizzato per un segnaposto di eliminazione;
+  - non esistono `synced_at`, `cloud_revision` né `file_path`, che restano solo sul dispositivo;
+  - `updated_at` è l'ora di modifica scelta dal dispositivo che ha scritto la riga e il server non la riscrive;
+  - lettura consentita solo al proprietario (Row Level Security); le scritture passano solo dalla funzione `push_note`; tabella pubblicata sul canale realtime.
 - Una nota ricevuta dal cloud è registrata come sincronizzata nell'istante in cui viene letta.

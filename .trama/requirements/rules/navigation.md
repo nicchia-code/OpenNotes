@@ -16,4 +16,10 @@ description: Usa quando lavori sul passaggio tra interfaccia desktop e mobile, s
 - Vale solo su Linux, macOS e Windows.
 - Finestra iniziale 1280 × 760 px, centrata; dimensione minima 680 × 480 px, così la finestra mostra sempre l'interfaccia desktop con la barra superiore.
 - Barra del titolo di sistema nascosta: la barra superiore dell'app è l'area di trascinamento e il doppio clic su di essa ingrandisce o ripristina la finestra.
+- Su Linux la barra del titolo del sistema non compare mai, né quella del compositore né quella del toolkit, almeno su COSMIC, Hyprland, GNOME e KDE in sessione Wayland; su altri ambienti non è garantito.
+- Se un sistema disegna comunque la propria barra del titolo, l'app non lo rileva e non cambia la propria barra superiore.
+- Su Linux l'app non disegna angoli arrotondati, bordo od ombra della finestra: restano solo quelli che il compositore aggiunge da sé.
+- Ridimensionamento su Linux: una fascia invisibile larga 6 px lungo i quattro bordi e zone di 12 × 12 px nei quattro angoli mostrano il cursore di ridimensionamento corrispondente e, trascinate, ridimensionano la finestra (in diagonale dagli angoli). La fascia sta sopra il contenuto: lì il clic ridimensiona invece di raggiungere l'interfaccia sotto.
+- La fascia di ridimensionamento non è attiva quando la finestra è ingrandita, a schermo intero o affiancata a tassello secondo quanto segnala il sistema.
+- Su macOS e Windows il ridimensionamento resta quello nativo del sistema.
 - I pulsanti chiudi, riduci e ingrandisci sono disegnati dall'app solo su Linux e Windows; su macOS l'app lascia 68 px liberi per i pulsanti nativi.

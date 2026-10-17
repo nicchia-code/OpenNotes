@@ -32,8 +32,10 @@ Editor a schermo intero della nota aperta dalla lista, con condivisione, protezi
 
 ##### Editing from list (initial)
 - `user.NAVIGATE_BACK` → Notes list
-- `user.MOVE_NOTE_TO_TRASH` → Notes list: dal menu azioni; sposta la nota nel cestino, offre di annullare e chiude l'editor.
-- `user.DELETE_NOTE_PERMANENTLY` → Notes list: dal menu azioni nel cestino, solo se l'utente conferma (dopo lo sblocco, se la nota è protetta); chiude l'editor.
+- `user.MOVE_NOTE_TO_TRASH` → Notes list: dal menu azioni, solo se la nota non è protetta oppure è già sbloccata in questa sessione; sposta la nota nel cestino, offre di annullare e chiude l'editor.
+- `user.MOVE_NOTE_TO_TRASH` → Editing from list: dal menu azioni, se la nota è protetta e non ancora sbloccata in questa sessione; sposta la nota nel cestino e offre di annullare; l'editor resta aperto sul segnaposto «Questa nota è protetta» finché l'utente non torna indietro.
+- `user.DELETE_NOTE_PERMANENTLY` → Notes list: dal menu azioni nel cestino, solo se l'utente conferma (dopo lo sblocco, se la nota è protetta) e la nota non è protetta oppure era già sbloccata in questa sessione; chiude l'editor.
+- `user.DELETE_NOTE_PERMANENTLY` → Editing from list: dal menu azioni nel cestino, se l'utente conferma inserendo il PIN e la nota è protetta e non ancora sbloccata in questa sessione; l'editor resta aperto sul segnaposto «Questa nota è protetta» finché l'utente non torna indietro.
 - `user.DUPLICATE_NOTE` → Editing from list: sostituisce l'editor con quello della nota selezionata a copia finita (la copia, o l'originale se lo sblocco è stato annullato), con lo stesso ritorno.
 - `user.OPEN_DRAWING` → Drawing from list
 
@@ -47,8 +49,10 @@ Editor a schermo intero di una nota appena creata dalle Cartelle, con gli stessi
 
 ##### Editing from folders (initial)
 - `user.NAVIGATE_BACK` → Folders
-- `user.MOVE_NOTE_TO_TRASH` → Folders: dal menu azioni; sposta la nota nel cestino, offre di annullare e chiude l'editor.
-- `user.DELETE_NOTE_PERMANENTLY` → Folders: dal menu azioni nel cestino, solo se l'utente conferma (dopo lo sblocco, se la nota è protetta); chiude l'editor.
+- `user.MOVE_NOTE_TO_TRASH` → Folders: dal menu azioni, solo se la nota non è protetta oppure è già sbloccata in questa sessione; sposta la nota nel cestino, offre di annullare e chiude l'editor.
+- `user.MOVE_NOTE_TO_TRASH` → Editing from folders: dal menu azioni, se la nota è protetta e non ancora sbloccata in questa sessione; sposta la nota nel cestino e offre di annullare; l'editor resta aperto sul segnaposto «Questa nota è protetta» finché l'utente non torna indietro.
+- `user.DELETE_NOTE_PERMANENTLY` → Folders: dal menu azioni nel cestino, solo se l'utente conferma (dopo lo sblocco, se la nota è protetta) e la nota non è protetta oppure era già sbloccata in questa sessione; chiude l'editor.
+- `user.DELETE_NOTE_PERMANENTLY` → Editing from folders: dal menu azioni nel cestino, se l'utente conferma inserendo il PIN e la nota è protetta e non ancora sbloccata in questa sessione; l'editor resta aperto sul segnaposto «Questa nota è protetta» finché l'utente non torna indietro.
 - `user.DUPLICATE_NOTE` → Editing from folders: sostituisce l'editor con quello della nota selezionata a copia finita (la copia, o l'originale se lo sblocco è stato annullato), con lo stesso ritorno.
 - `user.OPEN_DRAWING` → Drawing from folders
 

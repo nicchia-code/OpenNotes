@@ -7,6 +7,7 @@ import '../../core/models/tag_model.dart';
 import '../../core/services/sync_service.dart';
 import '../../core/state/notes_provider.dart';
 import '../settings/supabase_settings_dialog.dart';
+import '../sync/sync_status_indicator.dart';
 import '../theme/apple_theme.dart';
 import 'folder_dialog.dart';
 
@@ -56,10 +57,8 @@ class SidebarView extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (sync.isSyncing) ...[
-                  const CupertinoActivityIndicator(radius: 6),
-                  const SizedBox(width: 6),
-                ],
+                SyncStatusIndicator(color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary),
+                const SizedBox(width: 6),
                 Tooltip(
                   message: sync.isAuthenticated
                       ? 'Impostazioni (${sync.currentUser?.email})'

@@ -35,6 +35,7 @@ class Note {
   final DateTime? syncedAt;
   final String? filePath;
   final String? cachedSnippet;
+  final int? cloudRevision;
 
   const Note({
     required this.id,
@@ -51,10 +52,38 @@ class Note {
     this.syncedAt,
     this.filePath,
     this.cachedSnippet,
+    this.cloudRevision,
   });
 
   /// One character allowed in a tag name after `#`: letters and digits of any alphabet, `_` and `-`.
   static const tagNameChar = r'[\p{L}\p{M}\p{Nd}_\-]';
+
+  /// Orders tags alphabetically, with accented letters sorted as their base letter
+  /// (`città` sorts among the `c` tags, not after `z`). Tags that differ only by
+  /// accents fall back to the plain order, so the order is total.
+  static int compareTags(String a, String b) {
+    final byBase = _foldAccents(a).compareTo(_foldAccents(b));
+    return byBase != 0 ? byBase : a.compareTo(b);
+  }
+
+  static const _accentBase = <String, String>{
+    'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a',
+    'ç': 'c',
+    'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
+    'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i',
+    'ñ': 'n',
+    'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ø': 'o',
+    'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u',
+    'ý': 'y', 'ÿ': 'y',
+  };
+
+  static String _foldAccents(String tag) {
+    final buffer = StringBuffer();
+    for (final char in tag.split('')) {
+      buffer.write(_accentBase[char] ?? char);
+    }
+    return buffer.toString();
+  }
 
   /// Checks if a string contains only hashtags (e.g. "#lavoro #progetto")
   static bool isOnlyTags(String text) {
@@ -74,25 +103,19 @@ class Note {
       final item = list[i];
       if (item is! Map<String, dynamic>) continue;
       final type = item['type'] as String?;
-      final text = (item['text'] as String?)?.trim() ?? '';
-      if (text.isEmpty || isOnlyTags(text) || _titleLine(text).isEmpty) continue;
+      if (_titleLineIndex(_blockLines(item)) < 0) continue;
       if (type == 'title') return i;
       if (firstText < 0 && type != 'image' && type != 'table') firstText = i;
     }
     return firstText;
   }
 
-  /// First line of a block text that still has text once its leading `#` are removed; '' if none.
-  static String _titleLine(String text) {
-    for (final line in text.split('\n')) {
-      if (_stripHashes(line).isNotEmpty) return line;
-    }
-    return '';
-  }
+  /// The lines of the text of a block.
+  static List<String> _blockLines(Map<String, dynamic> item) =>
+      ((item['text'] as String?) ?? '').split('\n');
 
-  static String _stripHashes(String line) => line.trim().replaceFirst(RegExp(r'^#+\s*'), '').trim();
-
-  /// Index of the plain-text line the title comes from, -1 if none.
+  /// Index of the line the title comes from: the first line that is not empty,
+  /// not only tags, and still has text once its leading `#` are removed. -1 if none.
   static int _titleLineIndex(List<String> lines) {
     for (var i = 0; i < lines.length; i++) {
       final t = lines[i].trim();
@@ -102,13 +125,8 @@ class Note {
     return -1;
   }
 
-  static String _clipTitle(String text) {
-    final firstLine = text
-        .split('\n')
-        .first
-        .trim()
-        .replaceFirst(RegExp(r'^#+\s*'), '')
-        .trim();
+  static String _clipTitle(String line) {
+    final firstLine = line.trim().replaceFirst(RegExp(r'^#+\s*'), '').trim();
     final runes = firstLine.runes;
     return runes.length > 60
         ? String.fromCharCodes(runes.take(60)).trim()
@@ -128,8 +146,8 @@ class Note {
         if (list is List && list.every((e) => e is Map<String, dynamic>)) {
           final index = _titleBlockIndex(list);
           if (index >= 0) {
-            final text = (list[index] as Map<String, dynamic>)['text'] as String;
-            return _clipTitle(_titleLine(text));
+            final lines = _blockLines(list[index] as Map<String, dynamic>);
+            return _clipTitle(lines[_titleLineIndex(lines)]);
           }
           return defaultTitle;
         }
@@ -143,8 +161,8 @@ class Note {
     return index >= 0 ? _clipTitle(lines[index]) : defaultTitle;
   }
 
-  /// Extracts a short preview snippet from content, skipping the block or
-  /// line the title is taken from so the title is never repeated.
+  /// Extracts a short preview snippet from content. Only the title line is left
+  /// out (the rest of the title block stays), so the title is never repeated.
   static String extractSnippet(String rawContent, {bool isLocked = false}) {
     if (isLocked) {
       return 'Questa nota è protetta';
@@ -154,64 +172,87 @@ class Note {
     if (trimmed.startsWith('[')) {
       try {
         final list = jsonDecode(trimmed);
-        // Same block-document test as extractTitle: only a list of objects; anything else is plain text.
+        // Same block-document test as extractTitle. A block document never falls back to reading its JSON as text.
         if (list is List && list.every((e) => e is Map<String, dynamic>)) {
-          final titleIndex = _titleBlockIndex(list);
-          final buffer = StringBuffer();
-          var length = 0;
-
-          for (var i = 0; i < list.length; i++) {
-            final item = list[i];
-            if (i == titleIndex || item is! Map<String, dynamic>) continue;
-            if (item['type'] == 'image') continue;
-            final text = (item['text'] as String?)?.trim() ?? '';
-            if (text.isEmpty || isOnlyTags(text) || _titleLine(text).isEmpty) continue;
-            if (length > 0) {
-              buffer.write(' ');
-              length++;
-            }
-            buffer.write(text);
-            length += text.runes.length;
-            if (length > 90) break;
-          }
-          final res = buffer.toString().trim();
-          if (res.isNotEmpty) return res;
+          final preview = _joinPreview(
+            _blockPreviewLines(list, _titleBlockIndex(list)),
+          );
+          return preview.isEmpty ? 'Nessun testo aggiuntivo' : preview;
         }
-      } catch (_) {}
-    }
-
-    final lines = rawContent.split('\n');
-    final titleIndex = _titleLineIndex(lines);
-    final buffer = StringBuffer();
-    var length = 0;
-
-    for (var i = 0; i < lines.length; i++) {
-      if (i == titleIndex) continue;
-      final t = lines[i].trim();
-      if (t.isEmpty) continue;
-      if (isOnlyTags(t)) continue;
-      final cleanLine = t
-          .replaceAll(RegExp(r'^[#\-*+>]+\s*'), '')
-          .replaceAll(RegExp(r'^\d+[.)]\s+'), '')
-          .replaceAll(RegExp(r'^[•○●◦▪]\s*'), '')
-          .replaceAll(RegExp(r'\[[ xX]\]'), '')
-          .replaceAll('**', '')
-          .replaceAll('*', '')
-          .replaceAll('`', '')
-          .trim();
-      if (cleanLine.isNotEmpty) {
-        if (length > 0) {
-          buffer.write(' ');
-          length++;
-        }
-        buffer.write(cleanLine);
-        length += cleanLine.runes.length;
-        if (length > 90) break;
+      } catch (_) {
+        // Not JSON: plain text starting with '[' is read as lines below.
       }
     }
 
-    final result = buffer.toString();
-    return result.isEmpty ? 'Nessun testo aggiuntivo' : result;
+    final lines = rawContent.split('\n');
+    final preview = _joinPreview(
+      _plainPreviewLines(lines, _titleLineIndex(lines)),
+    );
+    return preview.isEmpty ? 'Nessun testo aggiuntivo' : preview;
+  }
+
+  /// Preview lines of a block document, in block order. Image and table blocks
+  /// are skipped; in the title block only the title line is left out.
+  static Iterable<String> _blockPreviewLines(
+    List<dynamic> list,
+    int titleIndex,
+  ) sync* {
+    for (var i = 0; i < list.length; i++) {
+      final item = list[i] as Map<String, dynamic>;
+      final type = item['type'] as String?;
+      if (type == 'image' || type == 'table') continue;
+      final lines = _blockLines(item);
+      final skip = i == titleIndex ? _titleLineIndex(lines) : -1;
+      for (var j = 0; j < lines.length; j++) {
+        if (j == skip) continue;
+        final cleaned = _previewLine(lines[j]);
+        if (cleaned != null) yield cleaned;
+      }
+    }
+  }
+
+  /// Preview lines of plain text, without the title line.
+  static Iterable<String> _plainPreviewLines(
+    List<String> lines,
+    int titleIndex,
+  ) sync* {
+    for (var i = 0; i < lines.length; i++) {
+      if (i == titleIndex) continue;
+      final cleaned = _previewLine(lines[i]);
+      if (cleaned != null) yield cleaned;
+    }
+  }
+
+  /// Cleaned preview text of one line; null when nothing is left (empty or tags only).
+  static String? _previewLine(String line) {
+    final t = line.trim();
+    if (t.isEmpty || isOnlyTags(t)) return null;
+    final clean = t
+        .replaceAll(RegExp(r'^[#\-*+>]+\s*'), '')
+        .replaceAll(RegExp(r'^\d+[.)]\s+'), '')
+        .replaceAll(RegExp(r'^[•○●◦▪]\s*'), '')
+        .replaceAll(RegExp(r'\[[ xX]\]'), '')
+        .replaceAll('**', '')
+        .replaceAll('*', '')
+        .replaceAll('`', '')
+        .trim();
+    return clean.isEmpty ? null : clean;
+  }
+
+  /// Joins preview lines with a space, stopping as soon as the text is longer than 90 characters.
+  static String _joinPreview(Iterable<String> lines) {
+    final buffer = StringBuffer();
+    var length = 0;
+    for (final line in lines) {
+      if (length > 0) {
+        buffer.write(' ');
+        length++;
+      }
+      buffer.write(line);
+      length += line.runes.length;
+      if (length > 90) break;
+    }
+    return buffer.toString();
   }
 
   /// Extracts a short preview snippet from content (ignoring first line/title)
@@ -458,7 +499,7 @@ class Note {
   static Map<String, dynamic>? _blockWithoutTitleLine(Map<String, dynamic> block) {
     final text = block['text'] as String? ?? '';
     final lines = text.split('\n');
-    final titleLine = lines.indexWhere((line) => _stripHashes(line).isNotEmpty);
+    final titleLine = _titleLineIndex(lines);
     if (titleLine < 0) return block;
     if (lines.length == 1) return null;
 
@@ -560,7 +601,7 @@ class Note {
             }
           }
         }
-        return set.toList()..sort();
+        return set.toList()..sort(compareTags);
       } catch (_) {}
     }
 
@@ -570,13 +611,13 @@ class Note {
         set.add(tag.toLowerCase());
       }
     }
-    return set.toList()..sort();
+    return set.toList()..sort(compareTags);
   }
 
   /// The stored tags, normalized: no `#`, trimmed, lowercase, sorted, no blanks.
   List<String> get storedTags {
     final stored = tags.map((t) => t.replaceAll('#', '').trim().toLowerCase());
-    return stored.where((t) => t.isNotEmpty).toSet().toList()..sort();
+    return stored.where((t) => t.isNotEmpty).toSet().toList()..sort(compareTags);
   }
 
   Note copyWith({
@@ -594,6 +635,7 @@ class Note {
     DateTime? syncedAt,
     String? filePath,
     String? cachedSnippet,
+    int? cloudRevision,
   }) {
     final nextContent = content ?? this.content;
     final nextIsLocked = isLocked ?? this.isLocked;
@@ -616,6 +658,7 @@ class Note {
       cachedSnippet: snippetNeedsUpdate
           ? extractSnippet(nextContent, isLocked: nextIsLocked)
           : (cachedSnippet ?? this.cachedSnippet),
+      cloudRevision: cloudRevision ?? this.cloudRevision,
     );
   }
 
@@ -634,6 +677,7 @@ class Note {
       'updated_at': updatedAt.toIso8601String(),
       'synced_at': syncedAt?.toIso8601String(),
       'file_path': filePath,
+      'cloud_revision': cloudRevision,
     };
   }
 
@@ -678,6 +722,7 @@ class Note {
         map['content'] as String? ?? '',
         isLocked: (map['is_locked'] as int? ?? 0) == 1,
       ),
+      cloudRevision: map['cloud_revision'] as int?,
     );
   }
 
@@ -727,6 +772,7 @@ class Note {
         json['content'] as String? ?? '',
         isLocked: json['is_locked'] as bool? ?? false,
       ),
+      cloudRevision: json['revision'] as int?,
     );
   }
 }

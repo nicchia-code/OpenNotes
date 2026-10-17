@@ -9,7 +9,7 @@ Una riga di una sezione di testo del documento. Il suo tipo viene da uno stile m
 - `user.SET_TEXT_STYLE` → Heading 1: se si sceglie «Intestazione». Prima toglie qualunque simbolo iniziale.
 - `user.SET_TEXT_STYLE` → Heading 2: se si sceglie «Sottointestazione». Prima toglie qualunque simbolo iniziale.
 - `user.SET_TEXT_STYLE` → Body: se si sceglie «Corpo». Toglie qualunque simbolo iniziale.
-- `user.SET_TEXT_STYLE` → Bulleted item: se si sceglie l'elenco puntato. Toglie i simboli esistenti e mette davanti il punto.
+- `user.SET_TEXT_STYLE` → Bulleted item: se si sceglie l'elenco puntato. Toglie i simboli esistenti e mette davanti il simbolo del livello di rientro della riga.
 - `user.SET_TEXT_STYLE` → Numbered item: se si sceglie l'elenco numerato. Toglie i simboli esistenti e mette davanti «1.».
 - `user.SET_TEXT_STYLE` → Unchecked: se si sceglie «Checklist». Toglie i simboli esistenti e mette davanti un cerchio vuoto.
 - `user.SET_TEXT_STYLE` → Quote: se si sceglie «Citazione». Toglie i simboli esistenti e mette davanti il segno di citazione.

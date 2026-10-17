@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:open_notes/core/models/note_model.dart';
 import 'package:open_notes/core/services/database_service.dart';
@@ -7,28 +8,38 @@ import 'package:open_notes/core/services/sync_service.dart';
 import 'package:open_notes/core/services/vault_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// Own file: the Supabase client is a process-wide singleton bound to the first test's server.
+// Own file: the Supabase client is a process-wide singleton.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('attachments of a cloud note are downloaded only when the cloud version replaces the local copy',
+  test('a sync run downloads the attachments missing from the vault once; applying a cloud copy downloads none',
       () async {
     const userId = '44444444-4444-4444-8444-444444444444';
-    const noteId = 'pull-attachment-note';
+    const noteId = 'attachment-note';
+    final now = DateTime.utc(2026, 10, 1, 9);
 
     // flutter_test replaces HttpClient with an offline stub; the fake cloud needs real sockets.
     final previousOverrides = HttpOverrides.current;
     HttpOverrides.global = null;
     addTearDown(() => HttpOverrides.global = previousOverrides);
 
+    final cloudNotes = <Map<String, dynamic>>[];
     final storageGets = <String>[];
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
     server.listen((request) async {
       await utf8.decoder.bind(request).join();
-      if (request.uri.path.startsWith('/storage/')) {
-        storageGets.add(request.uri.path);
-        request.response.statusCode = 404;
+      final path = request.uri.path;
+      if (path.startsWith('/storage/')) {
+        storageGets.add(path);
+        request.response.headers.contentType = ContentType.binary;
+        request.response.add(const [1, 2, 3]);
+      } else if (path == '/rest/v1/notes') {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode(cloudNotes));
+      } else if (path == '/rest/v1/folders') {
+        request.response.headers.contentType = ContentType.json;
+        request.response.write('[]');
       } else {
         request.response.statusCode = 404;
       }
@@ -77,42 +88,50 @@ void main() {
     await waitUntil(() => !syncService.isSyncing);
     expect(syncService.isAuthenticated, isTrue);
 
-    // The note was deleted offline; the delete is queued now.
-    final now = DateTime.utc(2026, 10, 1, 9);
+    // A note the device and the cloud both have at revision 3; its drawing is not in the vault yet.
+    const content = '[{"type":"image","text":"attachments/disegno.png"}]';
+    Map<String, dynamic> cloudRow(int revision, DateTime updatedAt, String title) => {
+          'id': noteId,
+          'user_id': userId,
+          'title': title,
+          'content': content,
+          'folder_id': 'notes',
+          'tags': <String>[],
+          'is_pinned': false,
+          'is_locked': false,
+          'is_deleted': false,
+          'deleted_at': null,
+          'created_at': now.toIso8601String(),
+          'updated_at': updatedAt.toIso8601String(),
+          'revision': revision,
+          'purged_at': null,
+        };
+    cloudNotes.add(cloudRow(3, now, 'Con allegato'));
     await dbService.upsertNote(Note(
       id: noteId,
-      title: 'Eliminata offline',
-      content: '',
+      title: 'Con allegato',
+      content: content,
       createdAt: now,
       updatedAt: now,
-    ).copyWith(syncedAt: now));
-    await dbService.permanentlyDeleteNote(noteId);
-    await dbService.queueSyncAction(
-      entityType: 'note',
-      entityId: noteId,
-      action: 'delete',
-      payload: jsonEncode({'id': noteId}),
-    );
+    ).copyWith(syncedAt: now, cloudRevision: 3));
 
-    // Cloud copy last edited before the delete was queued: the delete stays valid, the note is not replaced,
-    // and no attachment is downloaded.
-    final olderCloudCopy = Note(
-      id: noteId,
-      title: 'Cloud precedente',
-      content: '[{"type":"image","text":"attachments/disegno.png"}]',
-      createdAt: now,
-      updatedAt: DateTime.utc(2026, 10, 1, 8),
-    );
-    expect(await syncService.applyRemoteNote(olderCloudCopy), isFalse);
-    expect(storageGets, isEmpty, reason: 'a note whose queued delete stays valid downloads no attachment');
-    expect(await dbService.getNoteById(noteId), isNull);
-    expect(await dbService.hasPendingSyncAction(entityType: 'note', entityId: noteId, action: 'delete'), isTrue);
+    // A newer cloud copy is applied to the device: the copy alone downloads no attachment.
+    final newer = Note.fromSupabaseJson(cloudRow(4, DateTime.utc(2026, 10, 1, 10), 'Con allegato nuovo'));
+    expect(await syncService.applyRemoteNote(newer), isTrue);
+    expect(storageGets, isEmpty, reason: 'attachments are downloaded by the sync run, not by applying a note');
 
-    // Cloud copy newer than the queued delete: it replaces the note, so its attachment is downloaded.
-    final newerCloudCopy = olderCloudCopy.copyWith(updatedAt: DateTime.utc(2999));
-    expect(await syncService.applyRemoteNote(newerCloudCopy), isTrue);
-    expect(storageGets, hasLength(1), reason: 'the replacing cloud version downloads its attachment');
+    // The sync run downloads the missing attachment and records it as on the cloud.
+    cloudNotes
+      ..clear()
+      ..add(cloudRow(4, DateTime.utc(2026, 10, 1, 10), 'Con allegato nuovo'));
+    await syncService.syncNow();
+    expect(storageGets, hasLength(1));
     expect(storageGets.single, endsWith('/$userId/disegno.png'));
-    expect(await dbService.getNoteById(noteId), isNotNull);
+    expect(vaultService.resolveAttachment('attachments/disegno.png').existsSync(), isTrue);
+    expect(await dbService.getCloudAttachmentPaths(), contains('attachments/disegno.png'));
+
+    // The file is in the vault now: the next run does not download it again.
+    await syncService.syncNow();
+    expect(storageGets, hasLength(1));
   });
 }

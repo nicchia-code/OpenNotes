@@ -1,11 +1,11 @@
 # Drawing canvas
 
-Una tela dove disegnare a mano libera: ha proporzioni 4:3, occupa la larghezza disponibile ed è centrata sullo schermo; l'immagine salvata ha sempre la stessa dimensione, qualunque sia lo schermo. Il disegno finito entra nella nota aperta come immagine.
+Una tela dove disegnare a mano libera: ha proporzioni 4:3, occupa la larghezza disponibile ed è centrata sullo schermo; l'immagine salvata ha sempre la stessa dimensione, qualunque sia lo schermo. Si apre solo dalla nota aperta, e il disegno finito entra in quella nota come immagine.
 
 ## States
 
 ### Closed (initial)
-- `user.OPEN_DRAWING` → Drawing: dalla barra degli strumenti su desktop o dalla barra sopra la tastiera su mobile. La tela parte vuota e la penna è nera.
+- `user.OPEN_DRAWING` → Drawing: solo con una nota aperta nell'editor. Su desktop il comando «Disegno» (pulsante della barra superiore o voce del menu «Inserisci») compare solo quando c'è una nota selezionata e non si è nel cestino; su mobile si apre dalla barra sopra la tastiera dell'editor. La tela parte vuota e la penna è nera.
 
 ### Drawing
 Una tela bianca, anche dove si è usata la gomma, con una tavolozza di sette colori, una gomma, il comando per annullare l'ultimo tratto e quello per cancellare tutto.

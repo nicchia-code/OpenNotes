@@ -13,6 +13,6 @@ description: Use when changing PIN creation or verification, or which actions on
 ## note-access
 - Lo sblocco di una nota vale per la sessione: dura fino alla chiusura dell'app; non c'è riblocco automatico in secondo piano o dopo un tempo.
 - Proteggere una nota richiede solo che il PIN principale esista (creandolo se manca), non chiede di inserire il PIN esistente.
-- Richiedono il PIN corretto ogni volta, a prescindere dallo sblocco di sessione: togliere il lucchetto, duplicare, condividere, esportare in Markdown, eliminare definitivamente una nota protetta; svuotare il cestino quando tra le note mostrate nel cestino ce n'è almeno una protetta.
+- Richiedono il PIN corretto ogni volta, a prescindere dallo sblocco di sessione: togliere il lucchetto, duplicare, condividere, esportare in Markdown, eliminare definitivamente una nota protetta; svuotare il cestino quando nel cestino ce n'è almeno una protetta.
 - Mettere o togliere il lucchetto aggiorna la data di modifica della nota e la salva nel database locale, nel vault e nella coda di sincronizzazione.
 - La copia di una nota protetta resta protetta.

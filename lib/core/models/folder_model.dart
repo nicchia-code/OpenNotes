@@ -8,6 +8,8 @@ class Folder {
   final bool isSystem;
   final DateTime createdAt;
   final DateTime updatedAt;
+  /// Last cloud revision of this folder seen on this device; null when the device has never seen one.
+  final int? cloudRevision;
 
   const Folder({
     required this.id,
@@ -17,6 +19,7 @@ class Folder {
     this.isSystem = false,
     required this.createdAt,
     required this.updatedAt,
+    this.cloudRevision,
   });
 
   Folder copyWith({
@@ -27,6 +30,7 @@ class Folder {
     bool? isSystem,
     DateTime? createdAt,
     DateTime? updatedAt,
+    int? cloudRevision,
   }) {
     return Folder(
       id: id ?? this.id,
@@ -36,6 +40,7 @@ class Folder {
       isSystem: isSystem ?? this.isSystem,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      cloudRevision: cloudRevision ?? this.cloudRevision,
     );
   }
 
@@ -48,6 +53,7 @@ class Folder {
       'is_system': isSystem ? 1 : 0,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
+      'cloud_revision': cloudRevision,
     };
   }
 
@@ -64,6 +70,7 @@ class Folder {
       updatedAt: map['updated_at'] != null
           ? DateTime.tryParse(map['updated_at'] as String) ?? DateTime.now()
           : DateTime.now(),
+      cloudRevision: map['cloud_revision'] as int?,
     );
   }
 
@@ -93,6 +100,7 @@ class Folder {
       updatedAt: json['updated_at'] != null
           ? DateTime.tryParse(json['updated_at'] as String) ?? DateTime.now()
           : DateTime.now(),
+      cloudRevision: json['revision'] as int?,
     );
   }
 

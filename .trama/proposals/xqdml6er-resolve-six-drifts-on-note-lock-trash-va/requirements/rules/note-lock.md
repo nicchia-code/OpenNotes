@@ -1,0 +1,18 @@
+---
+description: Use when changing PIN creation or verification, or which actions on protected notes require the PIN.
+---
+# Note lock rules
+
+## master-pin
+- Impronta del PIN: SHA-256 dei byte UTF-8 del PIN dopo aver tolto gli spazi iniziali e finali, senza sale; il confronto in verifica avviene tra impronte.
+- Creazione: il PIN (dopo il trim) deve avere almeno 4 caratteri, altrimenti errore "Il PIN deve avere almeno 4 cifre."; la conferma (dopo il trim) deve coincidere, altrimenti errore "I PIN inseriti non coincidono.". Nessuna lunghezza massima, nessun controllo che siano solo cifre (la tastiera proposta è numerica).
+- La creazione del PIN è proposta solo quando l'utente protegge una nota e il PIN non è ancora impostato; non esiste cambio né rimozione del PIN.
+- Verifica: un PIN vuoto viene ignorato; se nessun PIN è impostato la verifica fallisce sempre; con PIN errato il messaggio è "PIN non corretto. Riprova."; nessun limite di tentativi né attesa tra tentativi.
+- Il PIN è locale al dispositivo e non viene sincronizzato.
+
+## note-access
+- Lo sblocco di una nota vale per la sessione: dura fino alla chiusura dell'app; non c'è riblocco automatico in secondo piano o dopo un tempo.
+- Proteggere una nota richiede solo che il PIN principale esista (creandolo se manca), non chiede di inserire il PIN esistente.
+- Richiedono il PIN corretto ogni volta, a prescindere dallo sblocco di sessione: togliere il lucchetto, duplicare, condividere, esportare in Markdown, eliminare definitivamente una nota protetta; svuotare il cestino quando nel cestino ce n'è almeno una protetta.
+- Mettere o togliere il lucchetto aggiorna la data di modifica della nota e la salva nel database locale, nel vault e nella coda di sincronizzazione.
+- La copia di una nota protetta resta protetta.

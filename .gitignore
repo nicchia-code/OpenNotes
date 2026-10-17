@@ -46,3 +46,9 @@ app.*.map.json
 
 # Supabase
 supabase/.temp/
+
+# Local build configuration
+.env
+
+# FVM Version Cache
+.fvm/

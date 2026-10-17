@@ -11,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('queued changes of a note already in the cloud all reach it, and a later delete stays a delete', () async {
+  test('queued edits of a note already in the cloud reach it, and a later delete stays a delete', () async {
     const userId = '44444444-4444-4444-8444-444444444444';
     const editedId = 'queued-edits-note';
     const deletedId = 'queued-edit-then-delete-note';
@@ -29,8 +29,10 @@ void main() {
           'created_at': '2000-01-01T00:00:00.000Z',
           // Copy written long ago by another device.
           'updated_at': '2000-01-01T00:00:00.000Z',
+          'revision': 1,
         };
     Map<String, dynamic>? cloudNote = cloudRow(editedId, 'Versione vecchia');
+    var revisionCounter = 1;
 
     // flutter_test replaces HttpClient with an offline stub; the fake cloud needs real sockets.
     final previousOverrides = HttpOverrides.current;
@@ -44,16 +46,18 @@ void main() {
       final isNotes = request.uri.path == '/rest/v1/notes';
       final wantsObject =
           (request.headers.value('accept') ?? '').contains('vnd.pgrst.object');
-      if (isNotes && request.method == 'POST') {
-        final sent = jsonDecode(body);
-        final row = Map<String, dynamic>.from(sent is List ? sent.single as Map : sent as Map);
-        // Like the server trigger: every write stamps updated_at with the server clock.
-        row['updated_at'] = DateTime.now().toUtc().add(const Duration(hours: 1)).toIso8601String();
-        cloudNote = row;
-        request.response.statusCode = 201;
-      } else if (isNotes && request.method == 'DELETE') {
-        cloudNote = null;
-        request.response.statusCode = 204;
+      if (request.uri.path == '/rest/v1/rpc/push_note' && request.method == 'POST') {
+        final call = jsonDecode(body) as Map<String, dynamic>;
+        final current = cloudNote;
+        request.response.headers.contentType = ContentType.json;
+        if (call['p_base_revision'] != current?['revision']) {
+          request.response.write(jsonEncode({'status': 'conflict', 'row': current}));
+        } else {
+          final row = Map<String, dynamic>.from(call['p_note'] as Map<String, dynamic>);
+          row['revision'] = ++revisionCounter;
+          cloudNote = row;
+          request.response.write(jsonEncode({'status': 'accepted', 'revision': revisionCounter}));
+        }
       } else if (isNotes && request.method == 'GET') {
         request.response.headers.contentType = ContentType.json;
         if (wantsObject) {
@@ -112,7 +116,7 @@ void main() {
     await waitUntil(() => !syncService.isSyncing);
     expect(syncService.isAuthenticated, isTrue);
 
-    // Two offline edits of a note the cloud already has: both sit in the queue, in order.
+    // Two offline edits of a note the cloud already has: they are one queued item, holding the later edit.
     final created = DateTime.utc(2026, 10, 1, 9);
     final first = Note(
       id: editedId,
@@ -151,7 +155,7 @@ void main() {
       createdAt: created,
       updatedAt: DateTime.utc(2026, 10, 1, 11),
     ).copyWith(syncedAt: created);
-    await dbService.permanentlyDeleteNote(deletedId);
+    await dbService.deleteNoteRow(deletedId);
     await dbService.queueSyncAction(
       entityType: 'note',
       entityId: deletedId,
@@ -167,7 +171,7 @@ void main() {
 
     await syncService.syncNow();
 
-    expect(cloudNote, isNull, reason: 'the queued delete is newer than the cloud copy it follows');
+    expect(cloudNote!['purged_at'], isNotNull, reason: 'the queued delete is newer than the cloud copy: it leaves a placeholder');
     expect(await dbService.getNoteById(deletedId), isNull);
     expect(await dbService.getPendingSyncActions(), isEmpty);
   });

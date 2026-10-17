@@ -21,6 +21,7 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 ## export-markdown-share
 
 - Testo condiviso: titolo, riga vuota, conversione Markdown della nota; oggetto della condivisione: il titolo.
+- Se il sistema non riesce ad aprire il foglio di condivisione: messaggio «Nota non condivisa: impossibile aprire il foglio di condivisione.»; non viene condiviso nulla.
 
 ## export-markdown-file
 

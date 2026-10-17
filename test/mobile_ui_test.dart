@@ -97,6 +97,7 @@ void main() {
     late VaultService vaultService;
     late Directory tempDir;
     late NotesProvider provider;
+    late SyncService syncService;
 
     setUp(() async {
       dbService = DatabaseService();
@@ -104,10 +105,11 @@ void main() {
       tempDir = await Directory.systemTemp.createTemp('mobile_ui_test_');
       vaultService = VaultService();
       await vaultService.init(customPath: tempDir.path);
+      syncService = SyncService(dbService, vaultService);
       provider = NotesProvider(
         dbService: dbService,
         vaultService: vaultService,
-        syncService: SyncService(dbService, vaultService),
+        syncService: syncService,
       );
       await provider.init();
       provider.selectFolder(Folder.trashId);
@@ -120,8 +122,11 @@ void main() {
 
     testWidgets('notes list hides new-note button while trash is open', (tester) async {
       await tester.pumpWidget(
-        ChangeNotifierProvider.value(
-          value: provider,
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider.value(value: syncService),
+          ],
           child: CupertinoApp(
             home: Builder(
               builder: (context) {
@@ -148,8 +153,11 @@ void main() {
         return created;
       }))!;
       await tester.pumpWidget(
-        ChangeNotifierProvider.value(
-          value: provider,
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider.value(value: syncService),
+          ],
           child: CupertinoApp(
             home: Builder(
               builder: (context) {
@@ -175,8 +183,11 @@ void main() {
 
     testWidgets('folders screen hides new-note button while trash is open', (tester) async {
       await tester.pumpWidget(
-        ChangeNotifierProvider.value(
-          value: provider,
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider.value(value: syncService),
+          ],
           child: CupertinoApp(
             home: MobileFoldersScreen(onNewNote: _noop),
           ),
@@ -194,8 +205,11 @@ void main() {
         await provider.refreshNotes();
       });
       await tester.pumpWidget(
-        ChangeNotifierProvider.value(
-          value: provider,
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider.value(value: syncService),
+          ],
           child: CupertinoApp(
             home: Builder(
               builder: (context) {
@@ -215,6 +229,47 @@ void main() {
       final field = tester.widget<CupertinoSearchTextField>(find.byType(CupertinoSearchTextField));
       expect(field.controller!.text, 'Alfa');
       expect(find.text('Beta'), findsNothing);
+    });
+
+    testWidgets('folders screen has no refresh control without a connected user', (tester) async {
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider.value(value: syncService),
+          ],
+          child: CupertinoApp(
+            home: MobileFoldersScreen(onNewNote: _noop),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(CupertinoSliverRefreshControl), findsNothing);
+    });
+
+    testWidgets('notes list has no refresh control without a connected user', (tester) async {
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: provider),
+            ChangeNotifierProvider.value(value: syncService),
+          ],
+          child: CupertinoApp(
+            home: Builder(
+              builder: (context) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  Navigator.of(context).push(CupertinoPageRoute<void>(
+                    builder: (_) => MobileNotesListScreen(onNewNote: _noop),
+                  ));
+                });
+                return const SizedBox();
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(CupertinoSliverRefreshControl), findsNothing);
     });
   });
 }

@@ -21,6 +21,8 @@ class NotesProvider extends ChangeNotifier {
   List<Note> _notes = [];
   List<Tag> _tags = [];
   String _selectedFolderId = Folder.allNotesId;
+  // Name of the open user folder when last seen; kept if the folder disappears.
+  String? _selectedFolderName;
   Set<String> _selectedTags = {};
   String? _selectedNoteId;
   String _searchQuery = '';
@@ -39,6 +41,8 @@ class NotesProvider extends ChangeNotifier {
   int _trashCount = 0;
   // Neighbours of a note being moved to trash, in fallback order; used only while that move runs.
   List<String> _trashFallbackIds = const [];
+  // Notes whose queued change is set aside by the sync; shown with a badge in the lists.
+  Set<String> _setAsideNoteIds = {};
   bool _disposed = false;
   StreamSubscription<RemoteChange>? _remoteSubscription;
   final SecurityService? _securityService;
@@ -56,8 +60,16 @@ class NotesProvider extends ChangeNotifier {
        _securityService = securityService {
     _syncService.addListener(_onSyncChanged);
     _securityService?.addListener(refreshNotes);
-    _remoteSubscription = _syncService.remoteChanges.listen((_) {
-      if (!_disposed) _reloadLists();
+    _remoteSubscription = _syncService.remoteChanges.listen((change) {
+      if (_disposed) return;
+      // A cloud version that protects a note hides it: the edit still waiting is handed over first, then
+      // the note is hidden, and the edit is written at once instead of after the 400 ms wait.
+      if (change is CloudNoteApplied && change.isLocked) {
+        deliverWaitingEdits();
+        _securityService?.relockNote(change.noteId);
+        unawaited(flushPendingContent());
+      }
+      _reloadLists();
     });
   }
 
@@ -78,9 +90,15 @@ class NotesProvider extends ChangeNotifier {
   List<Note> get notes => _notes;
   List<Tag> get tags => _tags;
   bool get contentSaveFailed => _contentSaveFailed;
+  /// Whether a version of [noteId] delivered by the editor is still waiting to be written or being written.
+  bool hasWaitingContent(String noteId) =>
+      _pendingContent?.noteId == noteId ||
+      _writingContents.any((w) => w.noteId == noteId);
   /// One event per note action cancelled because its vault file could not be written or removed.
   Stream<void> get actionFailures => _actionFailures.stream;
   String get selectedFolderId => _selectedFolderId;
+  /// Name of the open user folder, kept while the folder is missing from the list.
+  String? get selectedFolderName => _selectedFolderName;
   String? get selectedTag =>
       _selectedTags.isNotEmpty ? _selectedTags.first : null;
   Set<String> get selectedTags => Set.unmodifiable(_selectedTags);
@@ -128,6 +146,7 @@ class NotesProvider extends ChangeNotifier {
   /// Refreshes folder list from database
   Future<void> refreshFolders() async {
     _folders = await _dbService.getFolders();
+    _rememberSelectedFolderName();
     notifyListeners();
     refreshCounts();
   }
@@ -156,6 +175,7 @@ class NotesProvider extends ChangeNotifier {
     }
     _folderCounts = counts;
     _trashCount = await _dbService.getTrashCount();
+    _setAsideNoteIds = await _dbService.getSetAsideNoteIds();
     notifyListeners();
   }
 
@@ -174,6 +194,7 @@ class NotesProvider extends ChangeNotifier {
       tags: _selectedTags.isNotEmpty ? _selectedTags.toList() : null,
       isDeleted: isDeleted,
       searchQuery: _searchQuery,
+      isUnlocked: _securityService?.isNoteUnlocked,
     );
     _showWaitingContent();
 
@@ -195,11 +216,22 @@ class NotesProvider extends ChangeNotifier {
     refreshCounts();
   }
 
+  /// Whether the queued change of [noteId] is set aside, so the note is shown with a badge.
+  bool isNoteSetAside(String noteId) => _setAsideNoteIds.contains(noteId);
+
   /// Selects a folder and filters notes
   void selectFolder(String folderId) {
     _selectedFolderId = folderId;
+    _selectedFolderName = null;
+    _rememberSelectedFolderName();
     _selectedTags.clear();
     refreshNotes();
+  }
+
+  /// Keeps the name of the open user folder, so the view keeps its title when the folder is deleted elsewhere.
+  void _rememberSelectedFolderName() {
+    final match = _folders.where((f) => f.id == _selectedFolderId);
+    if (match.isNotEmpty) _selectedFolderName = match.first.name;
   }
 
   /// Selects a tag and filters notes across all folders (toggles off if tapped again, or multi-selects).
@@ -250,6 +282,15 @@ class NotesProvider extends ChangeNotifier {
     refreshNotes();
   }
 
+  /// True when the open view is a user folder that is no longer in the folder list
+  /// (deleted, for example, from another device). The view stays open and empty.
+  bool get _isSelectedFolderGone =>
+      _selectedFolderId != Folder.allNotesId &&
+      _selectedFolderId != Folder.trashId &&
+      _selectedFolderId != Folder.defaultNotesId &&
+      _selectedFolderId.isNotEmpty &&
+      !_folders.any((f) => f.id == _selectedFolderId);
+
   /// Creates a new Note in the current folder (or default notes folder)
   /// If creating inside a tag view (or multiple tags), appends those tags at the top of the note.
   Future<Note?> createNote({
@@ -262,7 +303,8 @@ class NotesProvider extends ChangeNotifier {
     String targetFolderId = _selectedFolderId;
     if (targetFolderId == Folder.allNotesId ||
         targetFolderId == Folder.trashId ||
-        targetFolderId.isEmpty) {
+        targetFolderId.isEmpty ||
+        _isSelectedFolderGone) {
       targetFolderId = Folder.defaultNotesId;
     }
 
@@ -284,7 +326,7 @@ class NotesProvider extends ChangeNotifier {
       title: initialTitle,
       content: content,
       folderId: targetFolderId,
-      tags: noteTags,
+      tags: {...noteTags, ...Note.extractTagsFromContent(content)}.toList(),
       createdAt: now,
       updatedAt: now,
       cachedSnippet: Note.extractSnippet(content),
@@ -469,6 +511,7 @@ class NotesProvider extends ChangeNotifier {
 
   /// Toggles locked state of a note
   Future<void> toggleLock(String noteId) async {
+    await _settleContent();
     final note = await _dbService.getNoteById(noteId);
     if (note == null) return;
 
@@ -485,17 +528,19 @@ class NotesProvider extends ChangeNotifier {
   }
 
   /// Moves note to trash. The file is written first: if it cannot be written, the note stays where it was.
-  /// While the move runs, the next note (else the previous one) is the selection fallback for any reload.
+  /// While the move runs, for a note leaving the view the next note (else the previous one) is the selection fallback for any reload.
   Future<bool> moveToTrash(String noteId) async {
     await _settleContent();
-    final oldIndex = _notes.indexWhere((note) => note.id == noteId);
-    final nextNoteId = oldIndex >= 0 && oldIndex + 1 < _notes.length ? _notes[oldIndex + 1].id : null;
-    final previousNoteId = oldIndex > 0 ? _notes[oldIndex - 1].id : null;
     final note = await _dbService.getNoteById(noteId);
     if (note == null) return false;
+    // A note already in the trash stays listed: only its trash date is renewed and the selection stays.
+    final leavesView = !note.isDeleted;
+    final oldIndex = _notes.indexWhere((n) => n.id == noteId);
+    final nextNoteId = leavesView && oldIndex >= 0 && oldIndex + 1 < _notes.length ? _notes[oldIndex + 1].id : null;
+    final previousNoteId = leavesView && oldIndex > 0 ? _notes[oldIndex - 1].id : null;
     // Select the neighbour before the write, so the list never shows another note first.
     final previousSelection = _selectedNoteId;
-    if (oldIndex >= 0) {
+    if (leavesView && oldIndex >= 0) {
       _selectedNoteId = nextNoteId ?? previousNoteId;
       _trashFallbackIds = [?nextNoteId, ?previousNoteId];
     }
@@ -587,7 +632,7 @@ class NotesProvider extends ChangeNotifier {
       id: uuid.v4(),
       title: copyTitle,
       content: content,
-      folderId: note.folderId,
+      folderId: _isSelectedFolderGone ? Folder.defaultNotesId : note.folderId,
       tags: List<String>.from(note.tags),
       isLocked: note.isLocked,
       createdAt: now,
@@ -619,7 +664,7 @@ class NotesProvider extends ChangeNotifier {
         return false;
       }
       await _syncService.notifyNoteChanged(note, isDelete: true);
-      await _dbService.permanentlyDeleteNote(note.id);
+      await _dbService.deleteNoteRow(note.id);
     }
     return true;
   }
@@ -676,10 +721,17 @@ class NotesProvider extends ChangeNotifier {
   /// Deletes a folder
   Future<void> deleteFolder(String folderId) async {
     final folder = _folders.where((f) => f.id == folderId).firstOrNull;
+    // The notes moved to Notes (trashed ones too) are queued with the folder delete.
+    final movedNotes = folder != null && !folder.isSystem
+        ? await _dbService.getNotes(folderId: folderId, isDeleted: null)
+        : const <Note>[];
     await _dbService.deleteFolder(folderId);
     if (folder != null && !folder.isSystem) {
       // Deleted here: the open view moves to All notes. A delete received from the cloud never reaches this code.
       if (_selectedFolderId == folderId) _selectedFolderId = Folder.allNotesId;
+      for (final note in movedNotes) {
+        await _syncService.notifyNoteChanged(note.copyWith(folderId: Folder.defaultNotesId));
+      }
       await _syncService.notifyFolderChanged(folder, isDelete: true);
     }
     await refreshFolders();

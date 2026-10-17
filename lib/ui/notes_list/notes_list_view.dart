@@ -340,6 +340,7 @@ class _NotesListViewState extends State<NotesListView> {
           onLongPressStart: (details) => openMenu(details.globalPosition),
           child: NoteCard(
             note: note,
+            isSetAside: provider.isNoteSetAside(note.id),
             isSelected: note.id == provider.selectedNoteId,
             onMenu: () {
               final box = context.findRenderObject() as RenderBox?;

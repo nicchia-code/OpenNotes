@@ -48,9 +48,8 @@ class SecurityService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Relocks all notes (e.g. when app goes to background or user locks)
-  void lockAll() {
-    _unlockedNoteIds.clear();
-    notifyListeners();
+  /// Ends the session unlock of a note: once protected, it is hidden again. Listeners are told only when it was unlocked.
+  void relockNote(String noteId) {
+    if (_unlockedNoteIds.remove(noteId)) notifyListeners();
   }
 }

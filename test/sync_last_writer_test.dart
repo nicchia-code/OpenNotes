@@ -26,6 +26,20 @@ void main() {
       'deleted_at': null,
       'created_at': '2026-10-01T09:00:00.000Z',
       'updated_at': '2026-10-01T11:00:00.000Z',
+      'revision': 5,
+      'purged_at': null,
+    };
+    final cloudFolder = {
+      'id': 'folder-1',
+      'user_id': userId,
+      'name': 'Nome cloud',
+      'parent_id': null,
+      'icon': 'folder',
+      'is_system': false,
+      'created_at': '2026-10-01T09:00:00.000Z',
+      'updated_at': '2026-10-01T11:00:00.000Z',
+      'revision': 5,
+      'purged_at': null,
     };
 
     // flutter_test replaces HttpClient with an offline stub; the fake cloud needs real sockets.
@@ -33,7 +47,7 @@ void main() {
     HttpOverrides.global = null;
     addTearDown(() => HttpOverrides.global = previousOverrides);
 
-    final upserts = <dynamic>[];
+    final noteAttempts = <dynamic>[];
     final folderUpserts = <dynamic>[];
     var notesGets = 0;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -42,27 +56,22 @@ void main() {
       final body = await utf8.decoder.bind(request).join();
       final isTable = request.uri.path == '/rest/v1/notes' ||
           request.uri.path == '/rest/v1/folders';
-      if (isTable && request.method == 'POST') {
-        if (request.uri.path == '/rest/v1/notes') upserts.add(jsonDecode(body));
-        if (request.uri.path == '/rest/v1/folders') folderUpserts.add(jsonDecode(body));
-        request.response.statusCode = 201;
+      if (request.uri.path == '/rest/v1/rpc/push_note' && request.method == 'POST') {
+        // The cloud copy is newer than the queued save: the write conflicts and the cloud row comes back.
+        noteAttempts.add(jsonDecode(body));
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'status': 'conflict', 'row': cloudNote}));
+      } else if (request.uri.path == '/rest/v1/rpc/push_folder' && request.method == 'POST') {
+        folderUpserts.add(jsonDecode(body));
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'status': 'conflict', 'row': cloudFolder}));
       } else if (isTable && request.method == 'GET') {
         request.response.headers.contentType = ContentType.json;
         if (request.uri.path == '/rest/v1/notes') {
           notesGets++;
           request.response.write(jsonEncode([cloudNote]));
         } else {
-          // Existing folder row, so the cloud already has it: the conflict check and existence check both see it.
-          final select = request.uri.queryParameters['select'];
-          request.response.write(select == 'updated_at'
-              ? jsonEncode([
-                  {'updated_at': '2026-10-01T11:00:00.000Z'}
-                ])
-              : select == 'id'
-                  ? jsonEncode([
-                      {'id': 'folder-1'}
-                    ])
-                  : '[]');
+          request.response.write(jsonEncode([cloudFolder]));
         }
       } else {
         request.response.statusCode = 404;
@@ -131,13 +140,13 @@ void main() {
 
     await syncService.syncNow();
 
-    expect(upserts, isEmpty, reason: 'an older local save must not overwrite the cloud copy');
+    expect(noteAttempts, hasLength(1), reason: 'the save is sent once and the cloud answers with its newer copy');
     expect(await dbService.getPendingSyncActions(), isEmpty,
         reason: 'the discarded save leaves the queue, not sent');
     final stored = await dbService.getNoteById('queued-note-2');
     expect(stored!.title, 'Versione cloud');
 
-    // A folder renamed offline while the cloud already has it: the queued rename is always sent.
+    // A folder renamed offline while the cloud already has a newer version: the queued rename loses (last writer wins).
     final folderJson = {
       'id': 'folder-1',
       'name': 'Nome locale',
@@ -155,8 +164,9 @@ void main() {
     );
     await syncService.syncNow();
 
-    expect(folderUpserts, hasLength(1), reason: 'the queued folder must overwrite the cloud copy');
-    expect(folderUpserts.single['name'], 'Nome locale');
+    expect(folderUpserts, hasLength(1), reason: 'the queued rename is sent once, and the cloud copy is newer');
+    expect((await dbService.getFolderById('folder-1'))!.name, 'Nome cloud',
+        reason: 'the cloud copy wins: the older rename is discarded');
     expect(await dbService.getPendingSyncActions(), isEmpty);
   });
 }

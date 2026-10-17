@@ -1,0 +1,46 @@
+---
+description: Use when changing how notes and folders are synchronised, conflicts resolved, the queue retried, users authenticated or the cloud project secured.
+---
+# Cloud sync rules
+
+## cloud-sync
+- Row-level security attiva su `notes` e `folders`: lettura permessa solo sulle righe con `user_id` uguale all'utente autenticato. Nessun client può inserire, modificare o eliminare direttamente le righe: le scritture passano solo dalle funzioni del database `push_note` e `push_folder`, che usano l'utente autenticato come proprietario. Una versione dell'app che scrive direttamente riceve un errore di permesso.
+- Pubblicazione realtime attiva su `notes` e `folders`; l'app si iscrive filtrando per `user_id` uguale all'utente connesso.
+- Archiviazione `note-attachments`: caricamento, sovrascrittura ed eliminazione permessi solo nella cartella il cui primo segmento è l'identificativo dell'utente; lettura permessa a chiunque sul bucket.
+- Revisione: ogni inserimento o modifica di una nota o di una cartella, segnaposti di eliminazione compresi, riceve una nuova `revision` presa da un'unica sequenza del database, strettamente crescente su tutto il progetto; due scritture non hanno mai la stessa revisione.
+- Confronto con la revisione: `push_note` e `push_folder` ricevono la riga e la revisione su cui si basa il dispositivo (vuota se il dispositivo non ha mai visto la riga sul cloud) e, in un'unica transazione, scrivono solo se la revisione attuale coincide (oppure la riga non esiste e la revisione è vuota); altrimenti non scrivono e restituiscono la riga attuale come conflitto. Una riga di un altro utente con lo stesso identificativo dà un errore di permesso.
+- Data di modifica: `updated_at` sul cloud è l'ora di modifica scelta dal dispositivo che ha scritto la riga (per un segnaposto, l'ora dell'eliminazione); il server non la riscrive.
+- Vince l'ultima modifica: in un conflitto si confronta l'ora di modifica della copia locale (per un'eliminazione in coda, il momento in cui è entrata in coda) con `updated_at` della riga del cloud; la copia locale vince solo se strettamente più recente, a parità vince il cloud. Quando vince la copia locale, viene inviata di nuovo basandosi sulla revisione appena letta. Vale per note e cartelle, per l'invio della coda, per il download e per le modifiche in tempo reale, anche tra un'eliminazione e una modifica.
+- Segnaposto di eliminazione: una nota o una cartella eliminata definitivamente resta sul cloud con `purged_at` valorizzato all'ora dell'eliminazione e senza contenuto; i segnaposti non vengono mai cancellati. Una scrittura vincente su un segnaposto lo fa rinascere (`purged_at` torna vuoto).
+- Eliminazione di una cartella sul cloud: `push_folder` che scrive un segnaposto toglie la cartella superiore alle sue sottocartelle, ognuna con una nuova revisione.
+
+## cloud-connection
+- Indirizzo e chiave vengono solo dalle variabili di build `SUPABASE_URL` e `SUPABASE_ANON_KEY`; non esistono valori incorporati nel codice e i valori salvati sul dispositivo non vengono usati.
+- Una variabile conta come mancante se non è passata, è vuota o contiene solo spazi; il formato dei valori non viene controllato. Il collegamento si prepara solo se nessuna delle due manca.
+- Testo dell'avviso di cloud non configurato: "Cloud non configurato: manca SUPABASE_URL." oppure "Cloud non configurato: manca SUPABASE_ANON_KEY."; se mancano entrambe, "Cloud non configurato: mancano SUPABASE_URL e SUPABASE_ANON_KEY.".
+- All'avvio l'avviso compare una sola volta come barra temporanea in basso, con lo stesso stile degli altri messaggi globali dell'app; il tentativo di accesso Google mostra lo stesso testo.
+- La preparazione del collegamento parte dopo la comparsa dell'interfaccia e non la ritarda.
+
+## account
+- Provider di accesso: Google OAuth tramite Supabase Auth.
+- Su desktop (Linux, macOS, Windows) il ritorno avviene su un server locale in ascolto su 127.0.0.1 porta 3000, con indirizzo di ritorno `http://localhost:3000`; se la porta non si apre, e su mobile, l'indirizzo di ritorno è `opennotes://login-callback`.
+- La pagina di successo nel browser tenta di chiudersi dopo 1500 ms.
+- Su macOS l'app sandbox dichiara i permessi di rete client e server (necessari al server locale di ritorno).
+- Dopo l'accesso la finestra delle impostazioni attende la fine del giro avviato dall'accesso (anche se quel giro ne fa partire un altro, conta il primo) prima di annunciarne il risultato; non avvia un secondo giro.
+
+## pending-change
+- Coda FIFO per identificativo crescente, con al più un elemento per nota o cartella. Un nuovo salvataggio aggiorna l'elemento esistente: nuovo contenuto e nuovo momento di ingresso, stessa posizione, stessa revisione di base, rifiuti azzerati e non più messo da parte. Un'eliminazione definitiva sostituisce allo stesso modo il salvataggio in attesa della stessa nota o cartella.
+- Un elemento viene rimosso quando il cloud lo accetta o quando viene scartato; quando il cloud lo accetta, la revisione restituita diventa la revisione nota della nota o della cartella.
+- Rifiuti: ogni rifiuto incrementa il contatore dell'elemento e ne registra il messaggio; al terzo rifiuto di fila l'elemento viene messo da parte. Un elemento messo da parte resta nella coda ma l'invio lo salta.
+- "Riprova" rimette in coda l'elemento messo da parte, con il contatore azzerato, e chiede un giro. "Usa la versione del cloud" è offerto solo se il cloud ha una copia non eliminata della nota o della cartella: toglie l'elemento dalla coda e chiede un giro che scarica e applica quella copia anche se la revisione è già nota.
+- Nessun limite di tentativi per gli errori di rete, i tempi scaduti e gli errori del cloud: l'elemento resta al suo posto e viene ritentato al giro successivo.
+- Scarti, senza avvisare l'utente: salvataggio non strettamente più recente della copia del cloud; salvataggio di una nota o cartella eliminata sul cloud dopo l'ultima modifica locale; eliminazione più vecchia dell'ultima modifica sul cloud; modifica in attesa più vecchia di una versione del cloud applicata; cambiamenti delle note rimosse per il cambio di account.
+- Ogni accodamento, se un utente è connesso, chiede subito una sincronizzazione senza attenderla.
+
+## realtime-channel
+- Un solo canale per note e cartelle, filtrato per `user_id`, con la callback di stato dell'iscrizione: uno stato `SUBSCRIBED` che segue `CHANNEL_ERROR`, `TIMED_OUT` o `CLOSED` conta come ricollegamento e chiede un giro incrementale; il primo `SUBSCRIBED` dopo l'apertura no.
+- Al rinnovo del token il canale non viene chiuso né riaperto: il nuovo token gli viene passato dalla libreria del cloud.
+- Le modifiche ricevute entrano in una coda in memoria e vengono applicate una alla volta, nell'ordine di arrivo. Un errore durante l'applicazione viene annotato nel registro, chiede un giro incrementale e non ferma le modifiche successive.
+- Una modifica con `revision` minore o uguale alla revisione nota della nota o della cartella viene ignorata (eco dei propri invii, modifiche già scaricate).
+- Una riga con `purged_at` valorizzato arriva come modifica e viene trattata come eliminazione definitiva fatta altrove.
+- Quando una nota ricevuta sostituisce quella locale si scaricano le immagini e i disegni che mancano nel vault; un download non riuscito viene annotato nel registro e ritentato al giro successivo.

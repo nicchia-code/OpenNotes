@@ -143,7 +143,7 @@ L'utente preme il cestino su un'immagine della nota.
 L'utente tocca l'area vuota dell'editor, sotto il contenuto.
 
 ### OPEN_DRAWING
-L'utente apre la tela da disegno dalla barra degli strumenti.
+L'utente apre la tela da disegno dalla barra degli strumenti della nota aperta (desktop) o dalla barra sopra la tastiera dell'editor (mobile).
 
 ### DRAW_STROKE
 L'utente traccia un tratto sulla tela da disegno.
@@ -176,7 +176,16 @@ L'utente preme "Accedi con Google" nella finestra di sincronizzazione cloud.
 L'utente preme "Disconnetti" nella finestra di sincronizzazione cloud.
 
 ### SYNC_NOW
-L'utente connesso preme "Sincronizza Adesso".
+L'utente connesso preme "Sincronizza Adesso" nella finestra di sincronizzazione cloud.
+
+### PULL_TO_REFRESH
+Su mobile l'utente trascina verso il basso la schermata Cartelle o la lista delle note per aggiornarle.
+
+### RETRY_SET_ASIDE_CHANGE
+L'utente preme "Riprova" su una nota o cartella non sincronizzata nella finestra di sincronizzazione cloud.
+
+### USE_CLOUD_VERSION
+L'utente preme "Usa la versione del cloud" su una nota o cartella non sincronizzata nella finestra di sincronizzazione cloud.
 
 ### SHARE_NOTE
 L'utente sceglie "Condividi" dal menu azioni di una nota o preme il pulsante di condivisione nell'editor mobile.
@@ -204,6 +213,9 @@ L'utente preme il pulsante verde (Linux, Windows) o fa doppio clic sulla barra s
 
 ### MINIMIZE_WINDOW
 L'utente preme il pulsante giallo per ridurre la finestra a icona (Linux, Windows).
+
+### RESIZE_WINDOW
+L'utente trascina un bordo o un angolo della finestra per cambiarne la dimensione (Linux).
 
 ### CLOSE_WINDOW
 L'utente preme il pulsante rosso per chiudere la finestra (Linux, Windows) oppure il pulsante di chiusura nativo della finestra su macOS.

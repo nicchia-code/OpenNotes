@@ -13,6 +13,7 @@ class NoteCard extends StatelessWidget {
   final VoidCallback onTap;
   final Function(String tag)? onTagTap;
   final VoidCallback? onMenu;
+  final bool isSetAside;
 
   const NoteCard({
     super.key,
@@ -21,6 +22,7 @@ class NoteCard extends StatelessWidget {
     required this.onTap,
     this.onTagTap,
     this.onMenu,
+    this.isSetAside = false,
   });
 
   String _formatDate(DateTime date) {
@@ -150,6 +152,13 @@ class NoteCard extends StatelessWidget {
                         color: secondaryColor,
                       ),
                     ),
+                    if (isSetAside) ...[
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.cloud_off,
+                        color: secondaryColor,
+                      ),
+                    ],
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(

@@ -25,9 +25,10 @@ void main() {
     addTearDown(() => server.close(force: true));
     server.listen((request) async {
       final body = await utf8.decoder.bind(request).join();
-      if (request.uri.path == '/rest/v1/folders' && request.method == 'POST') {
-        folderUpserts.add(jsonDecode(body));
-        request.response.statusCode = 201;
+      if (request.uri.path == '/rest/v1/rpc/push_folder' && request.method == 'POST') {
+        folderUpserts.add((jsonDecode(body) as Map<String, dynamic>)['p_folder']);
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'status': 'accepted', 'revision': folderUpserts.length}));
       } else if (request.uri.path == '/rest/v1/folders' && request.method == 'GET') {
         // The cloud no longer has folder-1.
         foldersGets++;

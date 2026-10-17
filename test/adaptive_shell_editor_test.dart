@@ -170,4 +170,88 @@ void main() {
       if (await tempDir.exists()) await tempDir.delete(recursive: true);
     });
   });
+
+  testWidgets('desktop search field keeps the filter text when the sidebar toggles', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    // The sidebar row overflows with the test font; that layout issue is not under test.
+    final previousOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.exceptionAsString().contains('overflowed')) return;
+      previousOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previousOnError);
+
+    late DatabaseService db;
+    late VaultService vault;
+    late SyncService sync;
+    late NotesProvider provider;
+    late Directory tempDir;
+    final note = Note(
+      id: 'search-note',
+      title: 'Ricerca',
+      content: 'Contenuto da cercare',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    await tester.runAsync(() async {
+      db = DatabaseService();
+      await db.init(inMemory: true);
+      tempDir = await Directory.systemTemp.createTemp('desktop_search_test_');
+      vault = VaultService();
+      await vault.init(customPath: tempDir.path);
+      sync = SyncService(db, vault);
+      provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      await db.upsertNote(note);
+      await provider.init();
+    });
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider.value(value: db),
+          Provider.value(value: vault),
+          ChangeNotifierProvider.value(value: sync),
+          ChangeNotifierProvider.value(value: SecurityService()),
+          ChangeNotifierProvider.value(value: provider),
+        ],
+        child: const MaterialApp(
+          home: Material(child: AdaptiveAppShell()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(CupertinoSearchTextField), 'Contenuto');
+    await tester.pumpAndSettle();
+    expect(provider.searchQuery, 'Contenuto');
+
+    String fieldText() => tester
+        .widget<CupertinoSearchTextField>(find.byType(CupertinoSearchTextField))
+        .controller!
+        .text;
+
+    await tester.tap(find.byTooltip('Nascondi barra laterale'));
+    await tester.pumpAndSettle();
+    expect(fieldText(), 'Contenuto');
+
+    await tester.tap(find.byTooltip('Mostra barra laterale'));
+    await tester.pumpAndSettle();
+    expect(fieldText(), 'Contenuto');
+    expect(provider.searchQuery, 'Contenuto');
+
+    provider.dispose();
+    await tester.runAsync(() async {
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    });
+  });
 }

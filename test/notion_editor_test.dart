@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1283,6 +1284,75 @@ Testo dopo
   );
 
   testWidgets(
+    'NotionDocumentEditor loads a remote version while a table cell has the cursor',
+    (tester) async {
+      const content = '''# Nota Remota Tabella
+
+Testo prima
+
+| A | B |
+|---|---|
+| 1 | 2 |
+
+Testo dopo
+''';
+      final note = Note(
+        id: 'test-remote-table-cell',
+        title: 'Nota Remota Tabella',
+        content: content,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      final editorKey = GlobalKey<NotionDocumentEditorState>();
+
+      Widget app(Note n) => MultiProvider(
+        providers: [
+          Provider.value(value: db),
+          Provider.value(value: vault),
+          ChangeNotifierProvider.value(value: sync),
+          ChangeNotifierProvider.value(value: security),
+          ChangeNotifierProvider.value(value: provider),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: NotionDocumentEditor(key: editorKey, note: n),
+          ),
+        ),
+      );
+
+      await tester.pumpWidget(app(note));
+      await tester.pumpAndSettle();
+
+      // Cursor in a table cell
+      await tester.tap(find.widgetWithText(TextField, '2'));
+      await tester.pumpAndSettle();
+
+      // A remote version that differs from the last saved one is loaded anyway
+      await tester.pumpWidget(
+        app(note.copyWith(content: content.replaceFirst('Testo dopo', 'Testo remoto'))),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is TextField && w.controller?.text.trim() == 'Testo remoto',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'NotionDocumentEditor checklist with the cursor in a table goes right after the table',
     (tester) async {
       final note = Note(
@@ -1613,6 +1683,57 @@ Testo dopo
       ]) {
         expect(find.text(label), findsOneWidget);
       }
+    },
+  );
+
+  testWidgets(
+    'NotionDocumentEditor openBlockMenu does nothing while the note is protected',
+    (tester) async {
+      final note = Note(
+        id: 'test-open-block-menu-protected',
+        title: 'Nota Protetta',
+        content: '',
+        isLocked: true,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      final editorKey = GlobalKey<NotionDocumentEditorState>();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(key: editorKey, note: note),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      editorKey.currentState?.openBlockMenu();
+      await tester.pumpAndSettle();
+      expect(find.text('Tabella'), findsNothing);
+
+      security.unlockNote(note.id);
+      await tester.pumpAndSettle();
+      expect(find.text('Tabella'), findsNothing);
     },
   );
 
@@ -2223,6 +2344,94 @@ Scrivendo un tag qui:
           .toList();
       expect(texts, contains('○ Due nuova'));
       expect(texts.last, 'Tre');
+    },
+  );
+
+  testWidgets(
+    'switching note discards the edit still waiting in the editor instead of saving it to the previous note',
+    (tester) async {
+      const contentA = '[{"id":"pa","type":"paragraph","text":"Uno"}]';
+      const contentB = '[{"id":"pb","type":"paragraph","text":"Due"}]';
+      final noteA = Note(
+        id: 'switch-discard-note-a',
+        title: 'Nota A',
+        content: contentA,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      final noteB = Note(
+        id: 'switch-discard-note-b',
+        title: 'Nota B',
+        content: contentB,
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      late DatabaseService db;
+      late VaultService vault;
+      late SyncService sync;
+      late NotesProvider provider;
+      late Directory tempDir;
+      await tester.runAsync(() async {
+        db = DatabaseService();
+        await db.init(inMemory: true);
+        tempDir = await Directory.systemTemp.createTemp('editor_switch_test_');
+        vault = VaultService();
+        await vault.init(customPath: tempDir.path);
+        sync = SyncService(db, vault);
+        provider = NotesProvider(
+          dbService: db,
+          vaultService: vault,
+          syncService: sync,
+        );
+        await db.upsertNote(noteA);
+        await db.upsertNote(noteB);
+        await provider.init();
+      });
+
+      Widget app(Note note) => MultiProvider(
+        providers: [
+          Provider.value(value: db),
+          Provider.value(value: vault),
+          ChangeNotifierProvider.value(value: sync),
+          ChangeNotifierProvider.value(value: SecurityService()),
+          ChangeNotifierProvider.value(value: provider),
+        ],
+        child: MaterialApp(
+          home: Scaffold(body: NotionDocumentEditor(note: note)),
+        ),
+      );
+
+      await tester.pumpWidget(app(provider.notes.firstWhere((n) => n.id == noteA.id)));
+      await tester.pumpAndSettle();
+
+      // Type into note A and switch to note B before the 300 ms pause elapses.
+      await tester.enterText(
+        find.byWidgetPredicate(
+          (w) => w is TextField && (w.controller?.text ?? '') == 'Uno',
+        ),
+        'Uno scritto ora',
+      );
+      await tester.pump();
+      await tester.pumpWidget(app(provider.notes.firstWhere((n) => n.id == noteB.id)));
+      await tester.pump();
+
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is TextField && (w.controller?.text ?? '') == 'Due',
+        ),
+        findsOneWidget,
+      );
+      // The waiting edit is discarded: note A keeps its stored content.
+      expect(
+        provider.notes.firstWhere((n) => n.id == noteA.id).content,
+        contentA,
+      );
+
+      await tester.runAsync(() async {
+        provider.dispose();
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
     },
   );
 }

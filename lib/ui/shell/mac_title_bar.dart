@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
+import '../../core/models/folder_model.dart';
 import '../../core/state/notes_provider.dart';
 import '../editor/notion_document_editor.dart';
 import '../theme/apple_theme.dart';
@@ -54,6 +55,10 @@ class MacTitleBar extends StatelessWidget {
     final isTrashSelected = context.select<NotesProvider, bool>(
       (p) => p.isTrashSelected,
     );
+    final canDraw = context.select<NotesProvider, bool>((p) {
+      final note = p.selectedNote;
+      return note != null && !note.isDeleted;
+    });
     final folderTitle = context.select<NotesProvider, String>(
       (p) => _getFolderTitle(p),
     );
@@ -420,7 +425,7 @@ class MacTitleBar extends StatelessWidget {
                           ],
                         ),
                       ),
-                      PopupMenuItem(
+                      if (canDraw) PopupMenuItem(
                         value: 'drawing',
                         child: Row(
                           children: [
@@ -476,12 +481,14 @@ class MacTitleBar extends StatelessWidget {
                   const SizedBox(width: 4),
 
                   // Drawing canvas
-                  _MacIconButton(
-                    icon: CupertinoIcons.pencil_outline,
-                    tooltip: 'Disegno',
-                    onPressed: onDrawing,
-                  ),
-                  const SizedBox(width: 4),
+                  if (canDraw) ...[
+                    _MacIconButton(
+                      icon: CupertinoIcons.pencil_outline,
+                      tooltip: 'Disegno',
+                      onPressed: onDrawing,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
 
                   // Photo attachment
                   _MacIconButton(
@@ -643,11 +650,8 @@ class MacTitleBar extends StatelessWidget {
     if (provider.selectedTags.isNotEmpty) {
       return provider.selectedTags.map((t) => '#$t').join(' ');
     }
-    final folder = provider.folders.cast<dynamic>().firstWhere(
-      (f) => f.id == provider.selectedFolderId,
-      orElse: () => null,
-    );
-    return folder?.name ?? 'Tutte le note';
+    if (provider.selectedFolderId == Folder.allNotesId) return 'Tutte le note';
+    return provider.selectedFolderName ?? 'Tutte le note';
   }
 
   Widget _buildTrafficLight({

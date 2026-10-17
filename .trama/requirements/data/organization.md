@@ -5,8 +5,8 @@ description: Serve quando si leggono o scrivono cartelle, tag, viste dell'elenco
 
 ## folder
 - Cartella: identificativo testuale (UUID v4 per le cartelle utente), nome obbligatorio, cartella superiore facoltativa, icona (predefinita `folder`), indicatore di cartella di sistema, data di creazione e di ultima modifica (ISO 8601).
-- Archivio locale SQLite: tabella `folders` con indicatore di sistema intero 0/1; alla creazione del database viene inserita la cartella di sistema `notes` con nome "Note".
-- Cloud Supabase: tabella `folders` con gli stessi campi più l'utente proprietario (eliminato a cascata con l'utente); cartella superiore con riferimento che si azzera se la superiore viene eliminata; indicatore di sistema booleano; data di modifica aggiornata da un trigger; Row Level Security che limita lettura, inserimento, modifica ed eliminazione alle righe dell'utente; tabella pubblicata in realtime.
+- Archiviazione locale SQLite: tabella `folders` con indicatore di sistema intero 0/1 e `cloud_revision` intero facoltativo (l'ultima revisione del cloud vista per la cartella); alla creazione del database viene inserita la cartella di sistema `notes` con nome "Note".
+- Cloud Supabase: tabella `folders` con gli stessi campi, senza `cloud_revision`, più l'utente proprietario (eliminato a cascata con l'utente); cartella superiore con riferimento che si azzera se la superiore viene eliminata; indicatore di sistema booleano; data di modifica scelta dal dispositivo, non riscritta dal server; `revision` assegnata dal server a ogni scrittura e `purged_at` per i segnaposti di eliminazione; Row Level Security che limita la lettura alle righe dell'utente, scritture solo tramite la funzione `push_folder`; tabella pubblicata in realtime.
 - Una nota appartiene a una sola cartella tramite il suo identificativo (predefinito `notes`); non c'è vincolo di integrità tra nota e cartella, né in locale né nel cloud.
 
 ## note-browser

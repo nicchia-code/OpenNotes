@@ -13,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('Account switch drops only synced notes and keeps folders with their unsent changes', () async {
+  test('Account switch drops synced notes and discards their unsent changes, keeps folders', () async {
     const userId = '22222222-2222-4222-8222-222222222222';
     // flutter_test replaces HttpClient with an offline stub; the fake cloud needs real sockets.
     HttpOverrides.global = null;
@@ -27,12 +27,14 @@ void main() {
       final body = await utf8.decoder.bind(request).join();
       final isNotes = request.uri.path == '/rest/v1/notes';
       final isFolders = request.uri.path == '/rest/v1/folders';
-      if (isNotes && request.method == 'POST') {
-        upserts.add(jsonDecode(body) as Map<String, dynamic>);
-        request.response.statusCode = 201;
-      } else if (isFolders && request.method == 'POST') {
-        folderUpserts.add(jsonDecode(body) as Map<String, dynamic>);
-        request.response.statusCode = 201;
+      if (request.uri.path == '/rest/v1/rpc/push_note' && request.method == 'POST') {
+        upserts.add((jsonDecode(body) as Map<String, dynamic>)['p_note'] as Map<String, dynamic>);
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'status': 'accepted', 'revision': upserts.length}));
+      } else if (request.uri.path == '/rest/v1/rpc/push_folder' && request.method == 'POST') {
+        folderUpserts.add((jsonDecode(body) as Map<String, dynamic>)['p_folder'] as Map<String, dynamic>);
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'status': 'accepted', 'revision': folderUpserts.length}));
       } else if ((isNotes || isFolders) && request.method == 'GET') {
         if (isNotes) notesGets++;
         request.response.headers.contentType = ContentType.json;

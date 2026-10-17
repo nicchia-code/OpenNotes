@@ -25,8 +25,8 @@ Al posto del contenuto c'è il segnaposto «Questa nota è protetta» con il pul
 - `user.INSERT_TABLE` → Protected: inserisce una tabella nel documento nascosto e lo salva subito.
 - `user.INSERT_PHOTO` → Protected: inserisce la foto nel documento nascosto e lo salva subito.
 - `drawing-canvas.DRAWING_SAVED` → Protected: inserisce il disegno nel documento nascosto e lo salva subito.
-- `sync-run.CLOUD_NOTE_APPLIED` → Protected: se riguarda la nota aperta, il nuovo contenuto è diverso dall'ultimo salvato dall'editor e nessuna riga di testo ha il focus. Ricarica il documento nascosto, che resta non mostrato. Altrimenti la versione remota viene ignorata.
-- `realtime-channel.CLOUD_NOTE_APPLIED` → Protected: alle stesse condizioni della sincronizzazione completa; ricarica il documento nascosto, che resta non mostrato.
+- `sync-run.CLOUD_NOTE_APPLIED` → Protected: se riguarda la nota aperta e il nuovo contenuto è diverso dall'ultimo salvato dall'editor. Ricarica il documento nascosto, che resta non mostrato.
+- `realtime-channel.CLOUD_NOTE_APPLIED` → Protected: alle stesse condizioni della sincronizzazione; ricarica il documento nascosto, che resta non mostrato.
 
 ### Open
 Mostra la data dell'ultima modifica, i tag della nota e il documento modificabile. Le sezioni di testo sono fatte di righe (vedi la macchina delle righe) con la formattazione dei caratteri; tabelle e immagini sono parti a sé. La parte attiva è quella che ha il focus, altrimenti l'ultima che lo ha avuto. La nota resta modificabile anche quando è nel cestino.
@@ -34,9 +34,7 @@ Mostra la data dell'ultima modifica, i tag della nota e il documento modificabil
 - `note-selection.SELECTED_NOTE_CHANGED` → Open: se la nuova nota non è protetta oppure è già sbloccata. Scarta senza salvarla l'eventuale modifica in attesa, chiude i menu e carica il nuovo documento.
 - `note-selection.SELECTED_NOTE_CHANGED` → Protected: se la nuova nota è protetta e non sbloccata. Scarta l'eventuale modifica in attesa.
 - `note-selection.SELECTED_NOTE_CHANGED` → Closed: se non è più selezionata nessuna nota. Scarta l'eventuale modifica in attesa.
-- `user.NAVIGATE_BACK` → Closed: su mobile, se l'editor è la schermata in primo piano. Scarta l'eventuale modifica in attesa. L'editor mobile si chiude allo stesso modo quando la nota aperta viene spostata nel cestino o eliminata dal suo menu.
-- `sync-run.CLOUD_NOTE_APPLIED` → Idle: se riguarda la nota aperta, il nuovo contenuto è diverso dall'ultimo salvato dall'editor e nessuna riga di testo ha il focus. Scarta la modifica in attesa, chiude i menu e ricarica il documento. Altrimenti la versione remota viene ignorata.
-- `realtime-channel.CLOUD_NOTE_APPLIED` → Idle: se riguarda la nota aperta, il nuovo contenuto è diverso dall'ultimo salvato dall'editor e nessuna riga di testo ha il focus. Scarta la modifica in attesa, chiude i menu e ricarica il documento. Altrimenti la versione remota viene ignorata.
+- `user.NAVIGATE_BACK` → Closed: su mobile, se l'editor è la schermata in primo piano. Scarta l'eventuale modifica in attesa. L'editor mobile si chiude allo stesso modo quando la nota aperta viene spostata nel cestino o eliminata dal suo menu; nello spostamento nel cestino la modifica in attesa viene prima consegnata, come per gli altri comandi sulla nota.
 - `user.EDIT_NOTE_TEXT` → Save pending: aggiorna il testo, sposta formattazione e stili di riga e applica le scorciatoie Markdown.
 - `user.PRESS_ENTER_IN_TEXT` → Save pending: su una voce di elenco, di checklist o numerata, o su una riga di titolo o intestazione applica le regole di continuazione. Altrove va semplicemente a capo.
 - `user.PRESS_TAB_IN_TEXT` → Save pending: aumenta il rientro delle righe selezionate, o lo riduce se si tiene premuto Maiuscole.
@@ -61,13 +59,25 @@ Mostra la data dell'ultima modifica, i tag della nota e il documento modificabil
 
 #### Idle (initial)
 Non ci sono modifiche in attesa di essere consegnate.
+- `sync-run.CLOUD_NOTE_APPLIED` → Idle: se riguarda la nota aperta, il nuovo contenuto è diverso dall'ultimo salvato dall'editor e non c'è una versione della nota in attesa di essere scritta, anche se una riga di testo ha il focus. Chiude i menu e ricarica il documento; se una riga aveva il focus, il cursore resta nella stessa riga e nella stessa posizione se esistono ancora, altrimenti va alla fine della riga più vicina, e su mobile la tastiera resta aperta. Se invece una versione della nota aperta è ancora in attesa di essere scritta, la versione remota non viene caricata: quella in attesa, più recente, la sostituirà, secondo la regola per cui vince l'ultima modifica.
+- `realtime-channel.CLOUD_NOTE_APPLIED` → Idle: alle stesse condizioni e con lo stesso effetto della sincronizzazione.
 
 #### Save pending
 Ci sono modifiche di testo non ancora consegnate. Ogni nuova modifica di testo fa ripartire l'attesa.
+- `sync-run.CLOUD_NOTE_APPLIED` → Save pending: se riguarda la nota aperta, la versione remota non viene caricata: la modifica in attesa, più recente, la sostituirà con il prossimo salvataggio, secondo la regola per cui vince l'ultima modifica.
+- `realtime-channel.CLOUD_NOTE_APPLIED` → Save pending: alle stesse condizioni e con lo stesso effetto della sincronizzazione.
 - `time.EDITOR_SAVE_DEBOUNCE_ELAPSED` → Idle: consegna per il salvataggio l'intero documento.
 - `operating-system.APP_LEAVING_FOREGROUND` → Idle: consegna subito per il salvataggio l'intero documento, senza aspettare la fine dell'attesa.
+- `user.PIN_NOTE` → Idle: prima che il comando agisca, anche su un'altra nota, consegna subito per il salvataggio l'intero documento, senza aspettare la fine dell'attesa.
+- `user.UNPIN_NOTE` → Idle: come per il fissaggio.
+- `user.LOCK_NOTE` → Idle: come per il fissaggio.
+- `user.REMOVE_NOTE_LOCK` → Idle: come per il fissaggio.
+- `user.MOVE_NOTE_TO_TRASH` → Idle: come per il fissaggio.
+- `user.RESTORE_NOTE` → Idle: come per il fissaggio.
+- `user.UNDO_MOVE_NOTE_TO_TRASH` → Idle: come per il fissaggio.
+- `user.MOVE_NOTE_TO_FOLDER` → Idle: come per il fissaggio.
 
 ## Events
 
 ### CONTENT_CHANGED
-Emesso quando l'editor trasforma l'intero documento della nota aperta in contenuto salvabile e lo consegna per il salvataggio. Succede subito dopo i comandi di formattazione, stile, checklist, tabelle, immagini, unione di sezioni, tag e menu rapido, dopo una pausa nelle modifiche di testo, oppure subito quando l'app lascia il primo piano con modifiche di testo non ancora consegnate. Succede anche quando la nota è protetta e i comandi agiscono sul documento nascosto.
+Emesso quando l'editor trasforma l'intero documento della nota aperta in contenuto salvabile e lo consegna per il salvataggio. Succede subito dopo i comandi di formattazione, stile, checklist, tabelle, immagini, unione di sezioni, tag e menu rapido, dopo una pausa nelle modifiche di testo, oppure subito quando l'app lascia il primo piano o sta per partire un comando sulla nota (fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare, spostare in un'altra cartella) con modifiche di testo non ancora consegnate. Succede anche quando la nota è protetta e i comandi agiscono sul documento nascosto.

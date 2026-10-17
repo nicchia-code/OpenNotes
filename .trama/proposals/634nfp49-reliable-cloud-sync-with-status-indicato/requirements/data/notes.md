@@ -1,0 +1,30 @@
+---
+description: Serve quando si legge o si modifica la struttura della nota nel database locale del dispositivo o nella tabella delle note nel cloud.
+---
+# Notes data
+
+## note
+- Database locale (SQLite, file `opennotes.db`), tabella `notes`, versione schema 2:
+  - `id`: testo, chiave primaria; UUID v4 generato alla creazione.
+  - `title`: testo obbligatorio; titolo mostrato negli elenchi.
+  - `content`: testo obbligatorio; documento a blocchi serializzato come elenco JSON oppure testo Markdown semplice.
+  - `folder_id`: testo obbligatorio, predefinito `notes` (cartella di sistema "Note"); per una nota nel cestino è la cartella di origine.
+  - `tags`: testo obbligatorio, elenco JSON di tag in minuscolo senza `#`, predefinito `[]`.
+  - `is_pinned`, `is_locked`, `is_deleted`: interi 0/1, predefiniti 0; indicano nota fissata, protetta con PIN, nel cestino.
+  - `deleted_at`: data di spostamento nel cestino (ISO 8601), vuota se la nota non è nel cestino.
+  - `created_at`, `updated_at`: date di creazione e ultima modifica (ISO 8601), obbligatorie.
+  - `synced_at`: data dell'ultima sincronizzazione con il cloud; vuota se la nota non è mai stata sincronizzata.
+  - `cloud_revision`: intero facoltativo, l'ultima revisione del cloud vista per la nota; vuota se il dispositivo non ne ha mai vista una.
+  - `file_path`: percorso del file Markdown della nota nell'archivio (vault), facoltativo.
+  - Indici su cartella, fissaggio, cestino e data di modifica.
+- L'anteprima (snippet) non è salvata: viene ricalcolata dal contenuto quando la nota viene letta o quando cambiano contenuto o protezione.
+- Valori mancanti alla lettura: titolo "Nuova nota", contenuto vuoto, cartella `notes`, tag vuoti, flag falsi, date di creazione e modifica uguali all'istante della lettura.
+- Cloud (Supabase, tabella `public.notes`):
+  - stessi campi `id`, `title` (predefinito "Nuova nota"), `content` (predefinito vuoto), `folder_id` (facoltativo, predefinito `notes`), `is_pinned`, `is_locked`, `is_deleted` (booleani, predefiniti falso), `deleted_at`, `created_at`, `updated_at` (timestamptz);
+  - `tags` è un array di testo, predefinito vuoto;
+  - `user_id`: UUID obbligatorio del proprietario, riferito all'utente autenticato e cancellato a cascata con esso;
+  - `revision`: bigint assegnato dal server a ogni scrittura; `purged_at`: timestamptz, valorizzato per un segnaposto di eliminazione;
+  - non esistono `synced_at`, `cloud_revision` né `file_path`, che restano solo sul dispositivo;
+  - `updated_at` è l'ora di modifica scelta dal dispositivo che ha scritto la riga e il server non la riscrive;
+  - lettura consentita solo al proprietario (Row Level Security); le scritture passano solo dalla funzione `push_note`; tabella pubblicata sul canale realtime.
+- Una nota ricevuta dal cloud è registrata come sincronizzata nell'istante in cui viene letta.

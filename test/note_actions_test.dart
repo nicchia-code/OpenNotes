@@ -7,6 +7,7 @@ import 'package:share_plus_platform_interface/share_plus_platform_interface.dart
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:open_notes/core/models/note_model.dart';
 import 'package:open_notes/core/services/database_service.dart';
 import 'package:open_notes/core/services/sync_service.dart';
@@ -218,6 +219,57 @@ void main() {
     await tester.tap(find.text('Annulla'));
     await tester.pumpAndSettle();
     expect(opened?.id, note.id);
+  });
+
+  testWidgets('protecting a note unlocked earlier in the session hides it again', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final security = SecurityService();
+    final note = Note(
+      id: 'relock-from-list',
+      title: 'Nota',
+      content: '',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await tester.runAsync(() async {
+      await security.setMasterPin('1234');
+      await db.upsertNote(note);
+    });
+    // Unlocked earlier in this session; its protection was then removed.
+    security.unlockNote(note.id);
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider.value(value: security),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => NoteActions.handle(
+                  context,
+                  note,
+                  NoteMenuAction.lock,
+                ),
+                child: const Text('Apri'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Apri'));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
+    await tester.pumpAndSettle();
+
+    expect(security.isNoteUnlocked(note.id), isFalse);
+    final saved = await tester.runAsync(() => db.getNoteById(note.id));
+    expect(saved?.isLocked, isTrue);
   });
 
   testWidgets('permanent deletion asks for confirmation before the PIN', (
@@ -451,6 +503,17 @@ void main() {
     );
     expect(
       NoteActions.savedFileName(Uri.file('/home/u/Documenti/Idee')),
+      isNull,
+    );
+  });
+
+  test('export message name falls back to the URI when the system has none', () async {
+    expect(
+      await NoteActions.savedFileNameOf(Uri.file('/home/u/Documenti/Mia nota.md')),
+      'Mia nota.md',
+    );
+    expect(
+      await NoteActions.savedFileNameOf(Uri.parse('content://x/document/1234')),
       isNull,
     );
   });

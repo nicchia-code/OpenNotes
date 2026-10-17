@@ -33,8 +33,12 @@ class NoteBlock {
   /// Focuses the first (`last: false`) or last (`last: true`) cell; set by the table widget.
   void Function({required bool last})? focusCell;
 
-  /// Whether a cell of this table has the cursor; set by the table widget.
-  bool Function()? hasCellFocus;
+  /// Cursor inside a table cell as row, column and offset, or null; set by the table widget.
+  ValueGetter<({int row, int column, int offset})?>? cellCaret;
+
+  /// Puts the cursor in the given cell, clamped to the table; set by the table widget.
+  void Function(int row, int column, int offset)? focusCellAt;
+
   Map<int, BlockType> lineStyles;
 
   NoteBlock({
@@ -135,6 +139,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   /// Ids of the notes whose text has been shown since the app opened.
   static final Set<String> _noteIdsWithShownText = {};
   String _lastSerializedContent = '';
+  // Counts the loads of the document: a table is rebuilt on each one, so its cells show the loaded text.
+  int _documentLoads = 0;
   NoteBlock? _activeBlock;
 
   /// Last text section that had the focus; the Block menu opens under it when none has.
@@ -148,11 +154,6 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   NotesProvider? _provider;
 
   bool get isPreviewMode => _isPreviewMode;
-
-  bool get _hasActiveFocus => _blocks.any(
-    (b) =>
-        (b.focusNode?.hasFocus ?? false) || (b.hasCellFocus?.call() ?? false),
-  );
 
   /// Whether the text of this note has been shown since the app opened. Style changes do not count.
   bool get _textShown => _noteIdsWithShownText.contains(widget.note.id);
@@ -220,11 +221,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   void didUpdateWidget(covariant NotionDocumentEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.note.id != widget.note.id) {
-      // The text still waiting belongs to the old note: hand it over before its blocks go.
-      if (_saveDebounceTimer?.isActive ?? false) {
-        _saveDebounceTimer!.cancel();
-        _doSerializeAndSave(noteId: oldWidget.note.id);
-      }
+      // The edit still waiting belongs to the old note: as the Model says, it is discarded, not saved.
+      _saveDebounceTimer?.cancel();
       _disposeControllers();
       _slashMenuBlock = null;
       _tagAutocompleteBlockIndex = null;
@@ -233,22 +231,110 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       _parseContentToBlocks(widget.note.content);
       _activeBlock = _initialActiveBlock;
     } else if (oldWidget.note.content != widget.note.content) {
-      // Remote sync update: only re-parse if different from our local edit AND user is not actively typing
-      if (widget.note.content != _lastSerializedContent && !_hasActiveFocus) {
+      // A remote version replaces the document only when the editor has no edit waiting, neither in the
+      // debounce window nor in the provider. A focused text line or table cell keeps its cursor.
+      final waitingInEditor = _saveDebounceTimer?.isActive ?? false;
+      final waitingInProvider = _provider?.hasWaitingContent(widget.note.id) ?? false;
+      if (widget.note.content != _lastSerializedContent && !waitingInEditor && !waitingInProvider) {
         // The reload rebuilds the parts: keep the active one by its position.
         final activePos = _activeBlockPos;
-        _saveDebounceTimer?.cancel();
-        _disposeControllers();
+        final caret = _focusedTextCaret();
+        final cellCaret = _focusedCellCaret();
         _slashMenuBlock = null;
         _tagAutocompleteBlockIndex = null;
         _tagAutocompleteQuery = null;
+        _disposeControllers();
         _lastSerializedContent = widget.note.content;
         _parseContentToBlocks(widget.note.content);
         _activeBlock = activePos >= 0 && activePos < _blocks.length
             ? _blocks[activePos]
             : _initialActiveBlock;
+        if (cellCaret != null) {
+          _restoreCellCaret(cellCaret);
+        } else if (caret != null) {
+          _restoreCaret(caret);
+        }
       }
     }
+  }
+
+  /// Cursor of the focused text line: its part index, line and column. Null when no text line has the focus.
+  ({int part, int line, int column})? _focusedTextCaret() {
+    for (var i = 0; i < _blocks.length; i++) {
+      final block = _blocks[i];
+      if (!(block.focusNode?.hasFocus ?? false)) continue;
+      final ctrl = block.controller;
+      if (ctrl == null || !_isTextPart(block)) return null;
+      final text = ctrl.text;
+      final sel = ctrl.selection;
+      final offset = sel.isValid ? (sel.start < text.length ? sel.start : text.length) : text.length;
+      final before = text.substring(0, offset);
+      return (
+        part: i,
+        line: '\n'.allMatches(before).length,
+        column: offset - before.lastIndexOf('\n') - 1,
+      );
+    }
+    return null;
+  }
+
+  /// Puts the cursor back after a remote reload: same line and column if they still exist, else the end of the
+  /// nearest line. Focus goes to the nearest text part.
+  void _restoreCaret(({int part, int line, int column}) caret) {
+    final textParts = [
+      for (var i = 0; i < _blocks.length; i++)
+        if (_isTextPart(_blocks[i])) i,
+    ];
+    if (textParts.isEmpty) return;
+    final index = textParts.reduce(
+      (a, b) => (a - caret.part).abs() <= (b - caret.part).abs() ? a : b,
+    );
+    final block = _blocks[index];
+    _activeBlock = block;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctrl = block.controller;
+      final node = block.focusNode;
+      if (!mounted || ctrl == null || node == null || !_blocks.contains(block)) return;
+      final lines = ctrl.text.split('\n');
+      final line = caret.line < lines.length ? caret.line : lines.length - 1;
+      final lineText = lines[line];
+      var offset = 0;
+      for (var i = 0; i < line; i++) {
+        offset += lines[i].length + 1;
+      }
+      offset += caret.column < lineText.length ? caret.column : lineText.length;
+      node.requestFocus();
+      ctrl.selection = TextSelection.collapsed(offset: offset);
+    });
+  }
+
+  /// Cursor of the focused table cell: its part index, row, column and offset. Null when no cell has the focus.
+  ({int part, int row, int column, int offset})? _focusedCellCaret() {
+    for (var i = 0; i < _blocks.length; i++) {
+      final cell = _blocks[i].cellCaret?.call();
+      if (cell != null) {
+        return (part: i, row: cell.row, column: cell.column, offset: cell.offset);
+      }
+    }
+    return null;
+  }
+
+  /// Puts the cursor back in a table cell after a remote reload: same row, column and offset if they still exist.
+  void _restoreCellCaret(({int part, int row, int column, int offset}) caret) {
+    final tableParts = [
+      for (var i = 0; i < _blocks.length; i++)
+        if (_blocks[i].type == BlockType.table) i,
+    ];
+    if (tableParts.isEmpty) return;
+    final index = tableParts.reduce(
+      (a, b) => (a - caret.part).abs() <= (b - caret.part).abs() ? a : b,
+    );
+    final block = _blocks[index];
+    _activeBlock = block;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_blocks.contains(block)) return;
+      block.focusCellAt?.call(caret.row, caret.column, caret.offset);
+    });
   }
 
   @override
@@ -297,6 +383,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   }
 
   void _parseContentToBlocks(String rawContent) {
+    _documentLoads++;
     _disposeControllers();
     _blocks.clear();
 
@@ -702,7 +789,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     });
   }
 
-  void _doSerializeAndSave({String? noteId}) {
+  void _doSerializeAndSave() {
     for (final b in _blocks) {
       if (b.controller != null) {
         b.text = b.controller!.text;
@@ -713,10 +800,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final blockList = _blocks.map((b) => b.toJson()).toList();
     final jsonString = jsonEncode(blockList);
     _lastSerializedContent = jsonString;
-    context.read<NotesProvider>().updateNoteContent(
-      noteId ?? widget.note.id,
-      jsonString,
-    );
+    context.read<NotesProvider>().updateNoteContent(widget.note.id, jsonString);
   }
 
   // --- External Toolbar Actions ---
@@ -767,6 +851,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   void openBlockMenu() => _openBlockMenu(scrolled: false);
 
   void _openBlockMenu({required bool scrolled}) {
+    // A protected note shows only the placeholder: the Block menu stays closed until it is unlocked.
+    final security = context.read<SecurityService>();
+    if (widget.note.isLocked && !security.isNoteUnlocked(widget.note.id)) return;
     final block = _blockMenuTarget;
     if (block == null) return;
     if (block.focusNode == null) {
@@ -1214,7 +1301,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
     if (block.type == BlockType.table) {
       return InteractiveTableBlock(
-        key: ValueKey(block.id),
+        key: ValueKey('${block.id}#$_documentLoads'),
         block: block,
         isDark: isDark,
         onChanged: () => _serializeAndSave(immediate: true),
@@ -2489,7 +2576,8 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
     super.initState();
     _syncMatrix();
     widget.block.focusCell = _focusEdgeCell;
-    widget.block.hasCellFocus = _hasCellFocus;
+    widget.block.cellCaret = _focusedCell;
+    widget.block.focusCellAt = _focusCellAt;
   }
 
   @override
@@ -2557,11 +2645,35 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
   void dispose() {
     _disposeMatrix();
     widget.block.focusCell = null;
-    widget.block.hasCellFocus = null;
+    widget.block.cellCaret = null;
+    widget.block.focusCellAt = null;
     super.dispose();
   }
 
-  bool _hasCellFocus() => _focusNodes.any((row) => row.any((n) => n.hasFocus));
+  ({int row, int column, int offset})? _focusedCell() {
+    for (int r = 0; r < _focusNodes.length; r++) {
+      for (int c = 0; c < _focusNodes[r].length; c++) {
+        if (!_focusNodes[r][c].hasFocus) continue;
+        final ctrl = _controllers[r][c];
+        final length = ctrl.text.length;
+        final start = ctrl.selection.isValid ? ctrl.selection.start : length;
+        return (row: r, column: c, offset: start > length ? length : start);
+      }
+    }
+    return null;
+  }
+
+  /// Puts the cursor in a cell, clamped to the table: the nearest row and column that still exist.
+  void _focusCellAt(int row, int column, int offset) {
+    if (_focusNodes.isEmpty) return;
+    final r = row >= _focusNodes.length ? _focusNodes.length - 1 : row;
+    final rowNodes = _focusNodes[r];
+    final c = column >= rowNodes.length ? rowNodes.length - 1 : column;
+    final ctrl = _controllers[r][c];
+    final length = ctrl.text.length;
+    rowNodes[c].requestFocus();
+    ctrl.selection = TextSelection.collapsed(offset: offset > length ? length : offset);
+  }
 
   void _addRow() {
     final rows = widget.block.tableData;

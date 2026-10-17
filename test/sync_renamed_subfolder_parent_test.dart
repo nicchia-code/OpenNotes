@@ -37,8 +37,8 @@ void main() {
     addTearDown(() => server.close(force: true));
     server.listen((request) async {
       final body = await utf8.decoder.bind(request).join();
-      if (request.uri.path == '/rest/v1/folders' && request.method == 'POST') {
-        final row = Map<String, dynamic>.from(jsonDecode(body) as Map);
+      if (request.uri.path == '/rest/v1/rpc/push_folder' && request.method == 'POST') {
+        final row = Map<String, dynamic>.from((jsonDecode(body) as Map)['p_folder'] as Map);
         final parentId = row['parent_id'] as String?;
         if (parentId != null && !cloudFolders.containsKey(parentId)) {
           // Foreign key violation: the parent does not exist in the cloud.
@@ -53,7 +53,8 @@ void main() {
         } else {
           folderUpserts.add(row);
           cloudFolders[row['id'] as String] = row;
-          request.response.statusCode = 201;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'status': 'accepted', 'revision': folderUpserts.length}));
         }
       } else if (request.uri.path == '/rest/v1/folders' && request.method == 'GET') {
         foldersGets++;

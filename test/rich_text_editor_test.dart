@@ -20,6 +20,26 @@ void main() {
   });
 
   group('RichTextEditingController Unit Tests', () {
+    test('a line symbol moves the formatting of its line once', () {
+      final ctrl = RichTextEditingController(
+        text: '• alpha\nbeta',
+        baseStyle: const TextStyle(),
+        spans: [StyleSpan(start: 8, end: 12, isBold: true)],
+      );
+      addTearDown(ctrl.dispose);
+
+      ctrl.removeLinePrefixes(0, 0);
+      expect(ctrl.text, 'alpha\nbeta');
+      expect(ctrl.spans.single.start, 6);
+      expect(ctrl.spans.single.end, 10);
+
+      ctrl.selection = const TextSelection.collapsed(offset: 6);
+      ctrl.applyLinePrefix('○ ');
+      expect(ctrl.text, 'alpha\n○ beta');
+      expect(ctrl.spans.single.start, 8);
+      expect(ctrl.spans.single.end, 12);
+    });
+
     test(
       'RichTextEditingController applies and removes bold style span on selection',
       () {
@@ -294,6 +314,40 @@ void main() {
         ctrl.toggleChecklistAtOffset(circlePos);
         expect(ctrl.text, 'Titolo\n● Primo compito\n');
         expect(ctrl.toMarkdown(), 'Titolo\n- [x] Primo compito\n');
+      },
+    );
+
+    test(
+      'RichTextEditingController keeps a checkbox without a following space as plain text for Enter, Tab, Backspace, button and tap',
+      () {
+        final ctrl = RichTextEditingController(
+          text: 'Titolo\n[ ]testo',
+          baseStyle: const TextStyle(fontSize: 15),
+        );
+
+        // Enter after plain text does not create a checklist item
+        ctrl.selection = const TextSelection.collapsed(offset: 15);
+        expect(ctrl.handleEnterKey(), isFalse);
+
+        // Tab only adds the indentation to the text
+        expect(ctrl.handleTabKey(), isTrue);
+        expect(ctrl.text, 'Titolo\n  [ ]testo');
+        expect(ctrl.handleTabKey(outdent: true), isTrue);
+        expect(ctrl.text, 'Titolo\n[ ]testo');
+
+        // Backspace right after the box does not delete it
+        ctrl.selection = const TextSelection.collapsed(offset: 10);
+        expect(ctrl.handleBackspaceKey(), isFalse);
+        expect(ctrl.text, 'Titolo\n[ ]testo');
+
+        // Tap on the box does not check it
+        expect(ctrl.toggleChecklistAtOffset(8), isFalse);
+        expect(ctrl.text, 'Titolo\n[ ]testo');
+
+        // The checklist button puts a circle in front without treating the box as an item
+        ctrl.selection = const TextSelection.collapsed(offset: 10);
+        ctrl.toggleChecklistAtCursor();
+        expect(ctrl.text, 'Titolo\n○ [ ]testo');
       },
     );
 
@@ -1119,7 +1173,7 @@ void main() {
     );
 
     testWidgets(
-      'Remote version does not reload while a table cell has the cursor',
+      'Remote version reloads while a table cell has the cursor and keeps the cell focus',
       (tester) async {
         final db = DatabaseService();
         final vault = VaultService();
@@ -1178,15 +1232,137 @@ void main() {
         );
         await tester.pumpAndSettle();
 
-        expect(find.text('Remota 1'), findsNothing);
-        expect(find.widgetWithText(TextField, 'Elemento 1'), findsOneWidget);
+        expect(find.text('Elemento 1'), findsNothing);
+        expect(find.widgetWithText(TextField, 'Remota 1'), findsOneWidget);
         expect(
           tester
-              .widget<TextField>(find.widgetWithText(TextField, 'Elemento 1'))
+              .widget<TextField>(find.widgetWithText(TextField, 'Remota 1'))
               .focusNode
               ?.hasFocus,
           isTrue,
         );
+      },
+    );
+
+    testWidgets(
+      'Remote version without a focused cell shows the loaded text in the table cells',
+      (tester) async {
+        final db = DatabaseService();
+        final vault = VaultService();
+        final sync = SyncService(db, vault);
+        final security = SecurityService();
+        final provider = _RecordingNotesProvider(
+          dbService: db,
+          vaultService: vault,
+          syncService: sync,
+        );
+
+        Widget build(Note note) => MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider<NotesProvider>.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(note: note),
+            ),
+          ),
+        );
+
+        Note noteWith(List<List<String>> rows) => Note(
+          id: 'test-table-reload-cells',
+          title: 'Nota con tabella',
+          content: jsonEncode([
+            {'id': 't1', 'type': 'table', 'tableData': rows},
+          ]),
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        await tester.pumpWidget(
+          build(noteWith([
+            ['Colonna 1', 'Colonna 2'],
+            ['Elemento 1', 'Elemento 2'],
+          ])),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.pumpWidget(
+          build(noteWith([
+            ['Colonna 1', 'Colonna 2'],
+            ['Remota 1', 'Remota 2'],
+          ])),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.widgetWithText(TextField, 'Remota 1'), findsOneWidget);
+        expect(find.widgetWithText(TextField, 'Elemento 1'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'Remote version reloads while a text line has the cursor and keeps the caret',
+      (tester) async {
+        final db = DatabaseService();
+        final vault = VaultService();
+        final sync = SyncService(db, vault);
+        final security = SecurityService();
+        final provider = _RecordingNotesProvider(
+          dbService: db,
+          vaultService: vault,
+          syncService: sync,
+        );
+
+        Widget build(Note note) => MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider<NotesProvider>.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(body: NotionDocumentEditor(note: note)),
+          ),
+        );
+
+        Note noteWith(String text) => Note(
+          id: 'test-text-line-remote',
+          title: 'Nota di testo',
+          content: jsonEncode([
+            {'id': '1', 'type': 'paragraph', 'text': text, 'spans': []},
+          ]),
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        await tester.pumpWidget(
+          build(noteWith('Versione locale\nSeconda riga')),
+        );
+        await tester.pumpAndSettle();
+
+        // Cursor on the second line, after "Se"
+        await tester.tap(find.byType(TextField));
+        await tester.pumpAndSettle();
+        final before =
+            tester.widget<TextField>(find.byType(TextField)).controller
+                as RichTextEditingController;
+        before.selection = const TextSelection.collapsed(offset: 18);
+
+        // Remote version arrives while the text line has the cursor and nothing is waiting
+        await tester.pumpWidget(
+          build(noteWith('Versione remota\nSeconda riga')),
+        );
+        await tester.pumpAndSettle();
+
+        final field = tester.widget<TextField>(find.byType(TextField));
+        final after = field.controller as RichTextEditingController;
+        expect(after.text, 'Versione remota\nSeconda riga');
+        expect(after.selection, const TextSelection.collapsed(offset: 18));
+        expect(field.focusNode?.hasFocus, isTrue);
       },
     );
 
@@ -1442,6 +1618,33 @@ Testo normale di corpo
       },
     );
 
+    test('createNote saves the tags written in the initial content', () async {
+      final db = DatabaseService();
+      await db.init(inMemory: true);
+      final tempDir = await Directory.systemTemp.createTemp('opennotes_test_');
+      final vault = VaultService();
+      await vault.init(customPath: tempDir.path);
+      final sync = SyncService(db, vault);
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+
+      try {
+        final created = (await provider.createNote(
+          initialTitle: 'Benvenuto',
+          initialContent: 'Ciao #note e #opennotes',
+        ))!;
+        expect(created.tags, ['note', 'opennotes']);
+
+        final stored = await db.getNoteById(created.id);
+        expect(stored!.tags, ['note', 'opennotes']);
+      } finally {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
     test('createNote clears an active search so the new note is listed', () async {
       final db = DatabaseService();
       await db.init(inMemory: true);
@@ -1516,6 +1719,27 @@ Testo normale di corpo
         expect(ctrl.text.endsWith('  ◦ Secondo punto\n'), isTrue);
       },
     );
+
+    test('RichTextEditingController handleTabKey moves inline formatting once', () {
+      final ctrl = RichTextEditingController(
+        text: 'Titolo\nAbc def\nGhi',
+        baseStyle: const TextStyle(fontSize: 15),
+        spans: [
+          StyleSpan(start: 11, end: 14, isBold: true),
+          StyleSpan(start: 15, end: 18, isItalic: true),
+        ],
+      );
+      ctrl.selection = const TextSelection(baseOffset: 8, extentOffset: 18);
+      expect(ctrl.handleTabKey(), isTrue);
+      expect(ctrl.text, 'Titolo\n  Abc def\n  Ghi');
+      expect(ctrl.spans.length, 2);
+      expect(ctrl.spans[0].start, 13);
+      expect(ctrl.spans[0].end, 16);
+      expect(ctrl.spans[0].isBold, isTrue);
+      expect(ctrl.spans[1].start, 19);
+      expect(ctrl.spans[1].end, 22);
+      expect(ctrl.spans[1].isItalic, isTrue);
+    });
 
     test('RichTextEditingController handleTabKey leaves heading lines unchanged', () {
       final ctrl = RichTextEditingController(

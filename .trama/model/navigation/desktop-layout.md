@@ -5,7 +5,7 @@ La disposizione dell'interfaccia principale secondo la larghezza disponibile: in
 ## States
 
 ### Starting (initial)
-L'interfaccia non è ancora mostrata: l'app sta preparando l'archivio locale, l'eventuale sincronizzazione iniziale e le note di benvenuto.
+L'interfaccia non è ancora mostrata: l'app sta preparando l'archivio locale e le note di benvenuto. Non attende né la preparazione del collegamento al cloud né la sincronizzazione, che proseguono dopo che l'interfaccia è comparsa.
 - `operating-system.APP_LAUNCHED` → Auto three columns: a preparazione finita, se la larghezza è almeno 960 px.
 - `operating-system.APP_LAUNCHED` → Auto two columns: a preparazione finita, se la larghezza è tra 680 e 959 px.
 - `operating-system.APP_LAUNCHED` → Auto mobile: a preparazione finita, se la larghezza è sotto 680 px; segnala il passaggio all'interfaccia mobile.

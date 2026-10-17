@@ -18,9 +18,21 @@ import '../notes_list/note_actions.dart';
 import '../theme/apple_theme.dart';
 import 'mac_title_bar.dart';
 
+/// Layout signals emitted when the shell crosses the desktop/mobile width threshold.
+enum DesktopLayoutEvent {
+  /// Width fell below 680 px: the mobile stack restarts from the notes list.
+  switchedToMobile,
+
+  /// Width reached 680 px again: the mobile stack is discarded.
+  switchedToDesktop,
+}
+
 /// Responsive and Adaptive Shell with Authentic macOS Sequoia Window Frame.
 class AdaptiveAppShell extends StatefulWidget {
-  const AdaptiveAppShell({super.key});
+  const AdaptiveAppShell({super.key, this.onLayoutEvent});
+
+  /// Receives a [DesktopLayoutEvent] after the frame in which the layout switches.
+  final ValueChanged<DesktopLayoutEvent>? onLayoutEvent;
 
   @override
   State<AdaptiveAppShell> createState() => _AdaptiveAppShellState();
@@ -28,6 +40,13 @@ class AdaptiveAppShell extends StatefulWidget {
 
 class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
   bool? _userToggledSidebar;
+
+  /// Width below which the mobile navigation replaces the desktop layout.
+  static const double _desktopMinWidth = 680;
+
+  /// Last layout announced; starts as desktop, which is the Inactive state of the mobile navigation.
+  bool _mobileLayoutAnnounced = false;
+
   final GlobalKey<NotionDocumentEditorState> _editorKey =
       GlobalKey<NotionDocumentEditorState>();
 
@@ -84,13 +103,30 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth >= 680) {
-          return _buildDesktopLayout(context, constraints);
-        } else {
+        final mobile = constraints.maxWidth < _desktopMinWidth;
+        _announceLayout(mobile);
+        if (mobile) {
           return _buildMobileLayout(context);
         }
+        return _buildDesktopLayout(context, constraints);
       },
     );
+  }
+
+  /// Emits the layout event for a threshold crossing once the frame is done.
+  /// The desktop layout is the initial state, so startup announces only a
+  /// switch to mobile.
+  void _announceLayout(bool mobile) {
+    if (mobile == _mobileLayoutAnnounced) return;
+    _mobileLayoutAnnounced = mobile;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onLayoutEvent?.call(
+        mobile
+            ? DesktopLayoutEvent.switchedToMobile
+            : DesktopLayoutEvent.switchedToDesktop,
+      );
+    });
   }
 
   /// macOS Sequoia Layout with Unified Window Chrome and Adaptive Columns
@@ -150,7 +186,10 @@ class _AdaptiveAppShellState extends State<AdaptiveAppShell> {
                 if (isSidebarVisible) const SidebarView(),
 
                 // Column 2: Notes List (260px)
-                const SizedBox(width: 260, child: NotesListView()),
+                const SizedBox(
+                  width: 260,
+                  child: NotesListView(key: ValueKey('notes-list')),
+                ),
 
                 // Column 3: Note Editor
                 Expanded(

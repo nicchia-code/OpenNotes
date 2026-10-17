@@ -12,7 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a full sync never removes a local folder the cloud no longer has, and its notes stay in it', () async {
+  test('a full sync removes a synced folder the cloud lacks; its notes move to Notes unqueued', () async {
     const userId = '44444444-4444-4444-8444-444444444444';
     // flutter_test replaces HttpClient with an offline stub; the fake cloud needs real sockets.
     final previousOverrides = HttpOverrides.current;
@@ -38,17 +38,35 @@ void main() {
     server.listen((request) async {
       final body = await utf8.decoder.bind(request).join();
       final isFolders = request.uri.path == '/rest/v1/folders';
-      if (isFolders && request.method == 'POST') {
-        final row = jsonDecode(body) as Map<String, dynamic>;
+      if (request.uri.path == '/rest/v1/rpc/push_folder' && request.method == 'POST') {
+        final row = (jsonDecode(body) as Map<String, dynamic>)['p_folder'] as Map<String, dynamic>;
         cloudFolders[row['id'] as String] = row;
-        request.response.statusCode = 201;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'status': 'accepted', 'revision': 1}));
       } else if (isFolders && request.method == 'GET') {
         foldersGets++;
         request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode(cloudFolders.values.toList()));
       } else if (request.uri.path == '/rest/v1/notes' && request.method == 'GET') {
         request.response.headers.contentType = ContentType.json;
-        request.response.write('[]');
+        // The note of the removed folder is still in the cloud, with its folder id: the full note check keeps it.
+        request.response.write(jsonEncode([
+          {
+            'id': 'gone-note',
+            'user_id': userId,
+            'title': 'Nota nella cartella eliminata',
+            'content': '',
+            'folder_id': 'gone-folder',
+            'tags': <String>[],
+            'is_pinned': false,
+            'is_locked': false,
+            'is_deleted': false,
+            'deleted_at': null,
+            'created_at': '2026-10-01T09:00:00.000Z',
+            'updated_at': '2026-10-01T09:00:00.000Z',
+            'purged_at': null,
+          },
+        ]));
       } else {
         request.response.statusCode = 404;
       }
@@ -122,10 +140,11 @@ void main() {
     await syncService.syncNow();
 
     final folderIds = (await dbService.getFolders()).map((f) => f.id).toList();
-    expect(folderIds, containsAll(['notes', 'cloud-folder', 'renamed-folder', 'gone-folder']));
-    expect((await dbService.getNoteById('gone-note'))!.folderId, 'gone-folder');
+    expect(folderIds, containsAll(['notes', 'cloud-folder', 'renamed-folder']));
+    expect(folderIds, isNot(contains('gone-folder')), reason: 'a synced folder the cloud no longer has is removed');
+    expect((await dbService.getNoteById('gone-note'))!.folderId, Folder.defaultNotesId);
     expect(await dbService.hasPendingSyncAction(entityType: 'note', entityId: 'gone-note'), isFalse,
-        reason: 'a full sync does not queue the note');
+        reason: 'the move to Notes is not queued');
     expect(cloudFolders.containsKey('renamed-folder'), isTrue, reason: 'a queued creation is sent, not dropped');
     expect(await dbService.getPendingSyncActions(), isEmpty);
   });

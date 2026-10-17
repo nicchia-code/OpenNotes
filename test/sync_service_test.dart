@@ -209,7 +209,7 @@ void main() {
     expect(pending.first['action'], 'delete');
   });
 
-  test('Creating and renaming a folder queues folder upserts', () async {
+  test('Creating and renaming a folder keeps one queued folder upsert', () async {
     final provider = NotesProvider(
       dbService: dbService,
       vaultService: vaultService,
@@ -223,7 +223,7 @@ void main() {
     final pending = (await dbService.getPendingSyncActions())
         .where((p) => p['entity_type'] == 'folder')
         .toList();
-    expect(pending.length, 2);
+    expect(pending.length, 1, reason: 'the rename replaces the queued creation of the folder');
     expect(pending.every((p) => p['entity_id'] == folder.id), isTrue);
     expect(pending.every((p) => p['action'] == 'upsert'), isTrue);
 
@@ -293,6 +293,32 @@ void main() {
     expect((await dbService.getNoteById('cloud-note-lock'))!.isLocked, isFalse);
   });
 
+  test('Cloud copy at or below the stored revision is ignored, whatever its update time', () async {
+    await dbService.upsertNote(Note(
+      id: 'cloud-note-revision',
+      title: 'Revisione',
+      content: 'Versione locale',
+      createdAt: DateTime(2024),
+      updatedAt: DateTime(2024),
+      cloudRevision: 5,
+    ));
+
+    final echo = Note(
+      id: 'cloud-note-revision',
+      title: 'Revisione',
+      content: 'Eco',
+      createdAt: DateTime(2024),
+      updatedAt: DateTime(2030),
+      cloudRevision: 5,
+    );
+    expect(await syncService.applyRemoteNote(echo), isFalse);
+    expect((await dbService.getNoteById('cloud-note-revision'))!.content, 'Versione locale');
+
+    final newer = echo.copyWith(content: 'Modifica', cloudRevision: 6, updatedAt: DateTime(2025));
+    expect(await syncService.applyRemoteNote(newer), isTrue);
+    expect((await dbService.getNoteById('cloud-note-revision'))!.content, 'Modifica');
+  });
+
   test('First cloud preparation that fails leaves the app not configured', () async {
     SharedPreferences.setMockInitialValues({});
     final saved = await syncService.initializeSupabase('http://[invalid', 'key');
@@ -329,6 +355,16 @@ void main() {
     expect(await auth.signInWithGoogle(), isFalse);
     expect(auth.isAuthenticated, isFalse);
     expect(syncService.isAwaitingLogin, isFalse);
+  });
+
+  test('Cloud preparation without a kept session never shows the busy signal', () async {
+    SharedPreferences.setMockInitialValues({});
+    final busy = <bool>[];
+    syncService.addListener(() => busy.add(syncService.isSyncing));
+    expect(await syncService.initializeSupabase('https://example.supabase.co', 'anon-key'), isTrue);
+    expect(busy, isNotEmpty);
+    expect(busy, everyElement(isFalse));
+    expect(syncService.isSyncing, isFalse);
   });
 
   test('Downloaded cloud note with a new title writes a new vault file and keeps the old one', () async {
@@ -375,6 +411,7 @@ void main() {
       content: 'Versione locale',
       createdAt: DateTime(2024),
       updatedAt: DateTime(2026),
+      cloudRevision: 5,
     ));
     final events = <RemoteChange>[];
     final subscription = syncService.remoteChanges.listen(events.add);
@@ -385,12 +422,13 @@ void main() {
       content: 'Versione cloud',
       createdAt: DateTime(2024),
       updatedAt: DateTime(2025),
+      cloudRevision: 4,
     );
     expect(await syncService.applyRemoteNote(older), isFalse);
     await Future<void>.delayed(Duration.zero);
     expect(events, isEmpty);
 
-    final newer = older.copyWith(title: 'Cloud nuovo', updatedAt: DateTime(2027));
+    final newer = older.copyWith(title: 'Cloud nuovo', updatedAt: DateTime(2027), cloudRevision: 6);
     expect(await syncService.applyRemoteNote(newer), isTrue);
     await Future<void>.delayed(Duration.zero);
     expect(events.single, isA<CloudNoteApplied>().having((e) => e.noteId, 'noteId', 'cloud-note-4'));
@@ -419,6 +457,17 @@ void main() {
     expect(syncService.isAwaitingLogin, isTrue);
     syncService.setAwaitingLogin(false);
     expect(syncService.isAwaitingLogin, isFalse);
+  });
+
+  test('Ending Awaiting login notifies listeners, so a failed return wakes the settings window', () {
+    syncService.setAwaitingLogin(true);
+    var notified = 0;
+    void onChange() => notified++;
+    syncService.addListener(onChange);
+    syncService.setAwaitingLogin(false);
+    syncService.removeListener(onChange);
+    expect(syncService.isAwaitingLogin, isFalse);
+    expect(notified, 1);
   });
 
   test('Cloud read takes every page and stops at the first short one', () async {

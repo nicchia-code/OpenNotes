@@ -226,44 +226,62 @@ class RichTextEditingController extends TextEditingController {
         newText = newText.replaceRange(start, start + matchLen, '');
         removed.add((start - shift, matchLen));
         shift -= matchLen;
-
-        for (final s in spans) {
-          if (s.start >= start + matchLen) {
-            s.start -= matchLen;
-            s.end -= matchLen;
-          } else if (s.end >= start) {
-            s.end -= matchLen;
-          }
-        }
       }
     }
 
     // Removing the symbols moves the offsets after them. The selection keeps
     // its lines, so the caller can still act on every selected line.
-    int mapOffset(int offset) {
-      var removedBefore = 0;
-      for (final (from, len) in removed) {
-        if (offset >= from + len) {
-          removedBefore += len;
-        } else if (offset > from) {
-          removedBefore += offset - from;
-        }
-      }
-      return offset - removedBefore;
-    }
-
+    final sel = selection;
     if (newText != fullText) {
-      final sel = selection;
+      _applyRemovalsToSpans(removed);
+      // The spans are already moved: marking the new text as seen stops the
+      // change listener from moving them a second time.
+      _previousText = newText;
       value = TextEditingValue(
         text: newText,
         selection: sel.isValid
             ? TextSelection(
-                baseOffset: mapOffset(sel.baseOffset),
-                extentOffset: mapOffset(sel.extentOffset),
+                baseOffset: _offsetAfterRemovals(sel.baseOffset, removed),
+                extentOffset: _offsetAfterRemovals(sel.extentOffset, removed),
               )
             : TextSelection.collapsed(offset: newText.length),
       );
+      _previousSelection = selection;
       _normalizeSpans();
+    }
+  }
+
+  /// Offset in the text after the [removed] symbols, given as (original
+  /// offset, length) pairs in increasing order.
+  static int _offsetAfterRemovals(int offset, List<(int, int)> removed) {
+    var removedBefore = 0;
+    for (final (from, len) in removed) {
+      if (offset >= from + len) {
+        removedBefore += len;
+      } else if (offset > from) {
+        removedBefore += offset - from;
+      }
+    }
+    return offset - removedBefore;
+  }
+
+  void _applyRemovalsToSpans(List<(int, int)> removed) {
+    for (final s in spans) {
+      s.start = _offsetAfterRemovals(s.start, removed);
+      s.end = _offsetAfterRemovals(s.end, removed);
+    }
+  }
+
+  /// Moves the spans for [length] characters inserted at [at]: formatting
+  /// starting at or after the insertion moves with the text.
+  void _applyInsertionToSpans(int at, int length) {
+    for (final s in spans) {
+      if (s.start >= at) {
+        s.start += length;
+        s.end += length;
+      } else if (s.end > at) {
+        s.end += length;
+      }
     }
   }
 
@@ -505,7 +523,7 @@ class RichTextEditingController extends TextEditingController {
         lineStyle == BlockType.h3;
 
     final checkMatch = RegExp(
-      r'^(\s*)([○●]|(?:[-*•]\s*)?\[[ xX]\])\s*',
+      r'^(\s*)([○●]|(?:[-*•]\s*)?\[[ xX]\](?=\s))\s*',
     ).firstMatch(currentLine);
     final bulletMatch = RegExp(
       r'^(\s*)([•◦▪]|-|\*)\s+',
@@ -704,6 +722,24 @@ class RichTextEditingController extends TextEditingController {
     return '▪';
   }
 
+  /// Maps an offset of the text before [edits] to the text after them. Each edit
+  /// `(start, removed, inserted)` replaces [removed] characters at [start]. An offset
+  /// inside removed characters goes to the start of its replacement; an end offset
+  /// at [start] stays before the inserted characters.
+  static int _mapOffsetThroughEdits(
+    int offset,
+    List<(int, int, int)> edits, {
+    required bool isEnd,
+  }) {
+    var shift = 0;
+    for (final (start, removed, inserted) in edits) {
+      if (offset < start || (isEnd && offset == start)) break;
+      if (offset < start + removed) return start + shift;
+      shift += inserted - removed;
+    }
+    return offset + shift;
+  }
+
   /// Handles Tab key (or Shift+Tab if [outdent] is true) as expected in Notion:
   /// - On bullet lists, indents to a nested internal sub-bullet ('• ' -> '  ◦ ' -> '    ▪ ')
   /// - If [outdent] is true, decreases indent level ('    ▪ ' -> '  ◦ ' -> '• ')
@@ -725,9 +761,13 @@ class RichTextEditingController extends TextEditingController {
     final transformedLines = <String>[];
     int deltaTotal = 0;
     int firstLineDelta = 0;
+    final edits = <(int, int, int)>[];
+    var lineOffset = lineStart;
 
     for (int i = 0; i < lines.length; i++) {
       final line = lines[i];
+      final lineStartOffset = lineOffset;
+      lineOffset += line.length + 1;
       // Headings have no Tab action: keep the line as it is.
       final lineStyle = getLineStyle(firstLineIdx + i);
       if (lineStyle == BlockType.title ||
@@ -739,7 +779,7 @@ class RichTextEditingController extends TextEditingController {
       }
       final bulletMatch = RegExp(r'^(\s*)([•◦▪]|\*|-)\s+').firstMatch(line);
       final checkMatch = RegExp(
-        r'^(\s*)([○●]|(?:[-*•]\s*)?\[[ xX]\])\s*',
+        r'^(\s*)([○●]|(?:[-*•]\s*)?\[[ xX]\](?=\s))\s*',
       ).firstMatch(line);
       final numMatch = RegExp(r'^(\s*)(\d+)\.\s+').firstMatch(line);
 
@@ -802,6 +842,16 @@ class RichTextEditingController extends TextEditingController {
         }
       }
 
+      if (newLine != line) {
+        var common = 0;
+        while (common < line.length &&
+            common < newLine.length &&
+            line[line.length - 1 - common] == newLine[newLine.length - 1 - common]) {
+          common++;
+        }
+        edits.add((lineStartOffset, line.length - common, newLine.length - common));
+      }
+
       final lineDelta = newLine.length - line.length;
       if (i == 0) firstLineDelta = lineDelta;
       deltaTotal += lineDelta;
@@ -835,19 +885,20 @@ class RichTextEditingController extends TextEditingController {
       newSelection = TextSelection(baseOffset: newStart, extentOffset: newEnd);
     }
 
-    // Adjust spans overlapping or following the transformed region
-    if (deltaTotal != 0) {
-      for (final span in spans) {
-        if (span.start >= lineEnd) {
-          span.start += deltaTotal;
-          span.end += deltaTotal;
-        } else if (span.end > lineStart) {
-          span.end = math.max(span.start, span.end + deltaTotal);
-        }
-      }
+    // Move each span through the edits, so it keeps the same characters.
+    for (final span in spans) {
+      span.start = _mapOffsetThroughEdits(span.start, edits, isEnd: false);
+      span.end = math.max(
+        span.start,
+        _mapOffsetThroughEdits(span.end, edits, isEnd: true),
+      );
     }
 
+    // The spans are moved above; the change listener must not move them a second time.
+    _previousText = newText;
+    _previousSelection = newSelection;
     value = TextEditingValue(text: newText, selection: newSelection);
+    _convertMarkdownShortcuts();
     _normalizeSpans();
     notifyListeners();
     return true;
@@ -872,7 +923,7 @@ class RichTextEditingController extends TextEditingController {
     final currentLine = fullText.substring(lineStart, nextNewline);
 
     final checkMatch = RegExp(
-      r'^(\s*)([○●]|(?:[-*•]\s*)?\[[ xX]\])\s*',
+      r'^(\s*)([○●]|(?:[-*•]\s*)?\[[ xX]\](?=\s))\s*',
     ).firstMatch(currentLine);
     if (checkMatch != null) {
       final prefix = checkMatch.group(0)!;
@@ -978,10 +1029,12 @@ class RichTextEditingController extends TextEditingController {
     final prefixRegex = RegExp(
       r'^(```\s?|#{1,3}\s+|[•○●◦▪]\s+|[-*]\s+|\[[ xX]\]\s+|\d+\.\s+|>\s+)',
     );
+    // Per line, the symbols after the indentation go and the new one takes
+    // their place: (offset before the change, removed length, inserted text).
+    final edits = <(int, int, String)>[];
     final transformedLines = <String>[];
-
+    var lineOffset = lineStart;
     for (final line in lines) {
-      // The symbol goes after the indentation, which stays as it is.
       final indent = RegExp(r'^\s*').stringMatch(line)!;
       final body = line.substring(indent.length);
       var withoutPrefix = body;
@@ -991,21 +1044,29 @@ class RichTextEditingController extends TextEditingController {
       final linePrefix = bulletByIndent
           ? '${getBulletForIndent(indent.length)} '
           : prefix;
-      if (linePrefix.isEmpty || body.startsWith(linePrefix)) {
-        transformedLines.add('$indent$withoutPrefix');
-      } else {
-        transformedLines.add('$indent$linePrefix$withoutPrefix');
+      // Applying the same prefix again removes it.
+      final insert = linePrefix.isEmpty || body.startsWith(linePrefix)
+          ? ''
+          : linePrefix;
+      final removedLength = body.length - withoutPrefix.length;
+      if (removedLength > 0 || insert.isNotEmpty) {
+        edits.add((lineOffset + indent.length, removedLength, insert));
       }
+      transformedLines.add('$indent$insert$withoutPrefix');
+      lineOffset += line.length + 1;
     }
 
     final newRegion = transformedLines.join('\n');
-    final diff = newRegion.length - selectedRegion.length;
     final newText = fullText.replaceRange(lineStart, lineEnd, newRegion);
 
-    for (final s in spans) {
-      if (s.start >= lineEnd) {
-        s.start += diff;
-        s.end += diff;
+    // Spans follow their text. Edits go from the last line to the first, so
+    // every offset still refers to the text before the change it meets.
+    for (final (at, removedLength, insert) in edits.reversed) {
+      if (removedLength > 0) {
+        _applyRemovalsToSpans([(at, removedLength)]);
+      }
+      if (insert.isNotEmpty) {
+        _applyInsertionToSpans(at, insert.length);
       }
     }
 
@@ -1049,8 +1110,8 @@ class RichTextEditingController extends TextEditingController {
     if (lineEnd == -1) lineEnd = fullText.length;
 
     final line = fullText.substring(lineStart, lineEnd);
-    final matchUnchecked = RegExp(r'^(\s*)(?:○|\[ \])\s*').firstMatch(line);
-    final matchChecked = RegExp(r'^(\s*)(?:●|\[[xX]\])\s*').firstMatch(line);
+    final matchUnchecked = RegExp(r'^(\s*)(?:○|\[ \](?=\s))\s*').firstMatch(line);
+    final matchChecked = RegExp(r'^(\s*)(?:●|\[[xX]\](?=\s))\s*').firstMatch(line);
 
     if (matchUnchecked != null) {
       final indent = matchUnchecked.group(1) ?? '';
@@ -1107,8 +1168,8 @@ class RichTextEditingController extends TextEditingController {
     if (lineEnd == -1) lineEnd = fullText.length;
 
     final line = fullText.substring(lineStart, lineEnd);
-    final matchUnchecked = RegExp(r'^(\s*)(?:○|\[ \])\s*').firstMatch(line);
-    final matchChecked = RegExp(r'^(\s*)(?:●|\[[xX]\])\s*').firstMatch(line);
+    final matchUnchecked = RegExp(r'^(\s*)(?:○|\[ \](?=\s))\s*').firstMatch(line);
+    final matchChecked = RegExp(r'^(\s*)(?:●|\[[xX]\](?=\s))\s*').firstMatch(line);
 
     if (matchUnchecked != null) {
       final prefixLen = matchUnchecked.group(0)!.length;
