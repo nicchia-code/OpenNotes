@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
@@ -35,18 +36,77 @@ class MobileNoteEditorScreen extends StatefulWidget {
 class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
   // Last version received from the list. When the note leaves the current
   // selection (moved, pinned, restored) or disappears from the data, the
-  // editor stays open and keeps showing this version.
+  // editor stays open: it keeps the text of this version and re-reads the
+  // stored folder, trash, pin and lock state on every data change.
   Note? _lastKnownNote;
+  NotesProvider? _provider;
   // Set once the editor closes, so it pops only once.
   bool _leaving = false;
+  // Set when the note is trashed or deleted from its menu: the editor closes and the waiting edit is discarded.
+  bool _removed = false;
   final GlobalKey<NotionDocumentEditorState> _editorKey =
       GlobalKey<NotionDocumentEditorState>();
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final provider = context.read<NotesProvider>();
+    if (identical(provider, _provider)) return;
+    _provider?.removeListener(_onDataChanged);
+    _provider = provider;
+    provider.addListener(_onDataChanged);
+  }
+
+  @override
+  void dispose() {
+    _provider?.removeListener(_onDataChanged);
+    super.dispose();
+  }
+
+  // Runs before the editor is disposed, for any way back (button, gesture, system key), so the edit still waiting
+  // is handed over when its 300 ms wait ends, while the screen leaves.
+  @override
+  void deactivate() {
+    if (!_removed) _editorKey.currentState?.keepWaitingTextOnExit();
+    super.deactivate();
+  }
+
+  // Only a note outside the list needs a stored read: listed notes already
+  // arrive through build.
+  void _onDataChanged() {
+    final provider = _provider;
+    if (provider == null || _leaving) return;
+    if (provider.notes.any((n) => n.id == widget.note.id)) return;
+    unawaited(_refreshStoredState(provider));
+  }
+
+  // Takes folder, trash, pin and lock from the stored note; the text stays as it is.
+  Future<void> _refreshStoredState(NotesProvider provider) async {
+    final stored = await provider.fetchNote(widget.note.id);
+    if (!mounted || stored == null) return;
+    final current = _lastKnownNote ?? widget.note;
+    setState(() {
+      _lastKnownNote = current.copyWith(
+        folderId: stored.folderId,
+        isPinned: stored.isPinned,
+        isLocked: stored.isLocked,
+        isDeleted: stored.isDeleted,
+        deletedAt: stored.deletedAt,
+        clearDeletedAt: stored.deletedAt == null,
+      );
+    });
+  }
 
   void _leave() {
     if (_leaving) return;
     _leaving = true;
     widget.onBack?.call();
     Navigator.maybePop(context);
+  }
+
+  void _leaveRemoved() {
+    _removed = true;
+    _leave();
   }
 
   void _onDrawing(BuildContext context) {
@@ -78,27 +138,10 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
     }
   }
 
-  Future<void> _onLock(
-    BuildContext context,
-    NotesProvider provider,
-    SecurityService security,
-  ) async {
-    // Same version the editor shows, so the lock button never reads a stale copy.
+  Future<void> _onLock(BuildContext context) async {
+    // Same version the editor shows; the lock decision itself is taken on the stored note.
     final currentNote = _lastKnownNote ?? widget.note;
-
-    if (currentNote.isLocked) {
-      final unlocked = await LockNoteDialog.showUnlockDialog(context, security);
-      if (unlocked) {
-        await provider.toggleLock(currentNote.id);
-      }
-    } else {
-      if (!security.hasMasterPin) {
-        final setPin = await LockNoteDialog.showSetPinDialog(context, security);
-        if (!setPin) return;
-      }
-      await provider.toggleLock(currentNote.id);
-      security.relockNote(currentNote.id);
-    }
+    await NoteActions.handle(context, currentNote, NoteMenuAction.lock);
   }
 
   void _showMoreMenu(BuildContext context) {
@@ -111,7 +154,7 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
     NoteActions.showMobile(
       context,
       note,
-      onRemoved: isProtected ? null : _leave,
+      onRemoved: isProtected ? null : _leaveRemoved,
       onOpenAfterDuplicate: (opened) {
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
@@ -182,7 +225,7 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
                 color: accentColor,
                 size: 21,
               ),
-              onPressed: () => _onLock(context, provider, security),
+              onPressed: () => _onLock(context),
             ),
 
             // More options button

@@ -188,6 +188,7 @@ void main() {
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
+    await tester.runAsync(() => db.upsertNote(note));
     Note? opened;
     await tester.pumpWidget(
       MultiProvider(
@@ -214,9 +215,15 @@ void main() {
     provider.selectNote('some-other-note');
     await tester.tap(find.text('Apri'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Duplica'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Duplica'));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Annulla'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Annulla'));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
     await tester.pumpAndSettle();
     expect(opened?.id, note.id);
   });
@@ -269,6 +276,58 @@ void main() {
 
     expect(security.isNoteUnlocked(note.id), isFalse);
     final saved = await tester.runAsync(() => db.getNoteById(note.id));
+    expect(saved?.isLocked, isTrue);
+  });
+
+  testWidgets('removing the lock asks for the PIN when the stored note is protected', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final security = SecurityService();
+    // The copy the menu was opened with is unlocked, but the stored note was protected meanwhile.
+    final shownCopy = Note(
+      id: 'protected-meanwhile',
+      title: 'Nota',
+      content: '',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await tester.runAsync(() async {
+      await security.setMasterPin('1234');
+      await db.upsertNote(shownCopy.copyWith(isLocked: true));
+    });
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider.value(value: security),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => NoteActions.handle(
+                  context,
+                  shownCopy,
+                  NoteMenuAction.lock,
+                ),
+                child: const Text('Apri'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Apri'));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
+    await tester.pumpAndSettle();
+    // The PIN dialog is up: cancelling it keeps the stored note protected.
+    await tester.tap(find.text('Annulla'));
+    await tester.pumpAndSettle();
+
+    final saved = await tester.runAsync(() => db.getNoteById(shownCopy.id));
     expect(saved?.isLocked, isTrue);
   });
 
@@ -392,6 +451,46 @@ void main() {
     },
   );
 
+  test('duplicate copies the text of a content save already running', () async {
+    final note = Note(
+      id: 'running-save',
+      title: 'Nota',
+      content: '# Nota\n\nVersione vecchia',
+      folderId: 'notes',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await db.upsertNote(note);
+    await provider.refreshNotes();
+    provider.updateNoteContent(note.id, '# Nota\n\nVersione appena scritta');
+
+    // A write of the waiting version starts; the duplicate must wait for it before reading.
+    final save = provider.flushPendingContent();
+    final copy = await provider.duplicateNote(note.id);
+    await save;
+
+    expect(copy, isNotNull);
+    expect(copy!.content, contains('Versione appena scritta'));
+    expect(copy.content, isNot(contains('Versione vecchia')));
+  });
+
+  test('duplicate keeps the text line after an empty heading', () async {
+    final note = Note(
+      id: 'empty-heading',
+      title: 'Vuota',
+      content: '#  \nPrimo rigo di testo\nSecondo rigo',
+      folderId: 'notes',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await db.upsertNote(note);
+
+    final copy = await provider.duplicateNote(note.id);
+
+    expect(copy, isNotNull);
+    expect(copy!.content, '# Vuota (copia)\nPrimo rigo di testo\nSecondo rigo');
+  });
+
   test(
     'moving trashed note changes folder and clears deletion timestamp',
     () async {
@@ -428,7 +527,7 @@ void main() {
     );
     await db.upsertNote(note);
 
-    await provider.toggleLock(note.id);
+    await provider.toggleLock(note.id, wasLocked: false);
 
     final locked = await db.getNoteById(note.id);
     expect(locked!.isLocked, isTrue);
@@ -529,6 +628,7 @@ void main() {
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
+    await tester.runAsync(() => db.upsertNote(note));
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -551,7 +651,10 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('Esporta'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Esporta'));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
     await tester.pumpAndSettle();
     expect(
       find.text(
@@ -572,6 +675,7 @@ void main() {
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
     );
+    await tester.runAsync(() => db.upsertNote(note));
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -594,7 +698,10 @@ void main() {
         ),
       ),
     );
-    await tester.tap(find.text('Condividi'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Condividi'));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
     await tester.pumpAndSettle();
     expect(
       find.text(

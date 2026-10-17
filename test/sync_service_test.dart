@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:open_notes/core/models/folder_model.dart';
 import 'package:open_notes/core/models/note_model.dart';
 import 'package:open_notes/core/services/database_service.dart';
 import 'package:open_notes/core/services/sync_service.dart';
@@ -270,6 +271,29 @@ void main() {
     provider.dispose();
   });
 
+  test('Deleting a synced folder queues the delete on the cloud revision the device saw', () async {
+    final now = DateTime.utc(2026, 10, 1, 9);
+    await dbService.upsertFolder(
+      Folder(id: 'synced-folder-delete', name: 'Sincronizzata', createdAt: now, updatedAt: now, cloudRevision: 7),
+    );
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+    );
+    await provider.init();
+
+    await provider.deleteFolder('synced-folder-delete');
+
+    final pending = (await dbService.getPendingSyncActions())
+        .where((p) => p['entity_type'] == 'folder' && p['entity_id'] == 'synced-folder-delete')
+        .toList();
+    expect(pending.single['action'], 'delete');
+    expect(pending.single['base_revision'], 7);
+
+    provider.dispose();
+  });
+
   test('Cloud version carries its lock state to the local copy, in both directions', () async {
     final local = Note(
       id: 'cloud-note-lock',
@@ -468,6 +492,10 @@ void main() {
     syncService.removeListener(onChange);
     expect(syncService.isAwaitingLogin, isFalse);
     expect(notified, 1);
+  });
+
+  test('Sign-in run is complete when no sign-in has started a run', () async {
+    await expectLater(syncService.signInRun, completes);
   });
 
   test('Cloud read takes every page and stops at the first short one', () async {

@@ -254,4 +254,82 @@ void main() {
       if (await tempDir.exists()) await tempDir.delete(recursive: true);
     });
   });
+
+  testWidgets('desktop search field shows the active query when the layout switches to desktop', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    // The sidebar row overflows with the test font; that layout issue is not under test.
+    final previousOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.exceptionAsString().contains('overflowed')) return;
+      previousOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previousOnError);
+
+    late DatabaseService db;
+    late VaultService vault;
+    late SyncService sync;
+    late NotesProvider provider;
+    late Directory tempDir;
+    final note = Note(
+      id: 'search-note',
+      title: 'Ricerca',
+      content: 'Contenuto da cercare',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
+    await tester.runAsync(() async {
+      db = DatabaseService();
+      await db.init(inMemory: true);
+      tempDir = await Directory.systemTemp.createTemp('desktop_search_mount_test_');
+      vault = VaultService();
+      await vault.init(customPath: tempDir.path);
+      sync = SyncService(db, vault);
+      provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      await db.upsertNote(note);
+      await provider.init();
+      // The search was made in the mobile layout, before the desktop shell is mounted.
+      provider.setSearchQuery('Contenuto');
+      await provider.refreshNotes();
+    });
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          Provider.value(value: db),
+          Provider.value(value: vault),
+          ChangeNotifierProvider.value(value: sync),
+          ChangeNotifierProvider.value(value: SecurityService()),
+          ChangeNotifierProvider.value(value: provider),
+        ],
+        child: const MaterialApp(
+          home: Material(child: AdaptiveAppShell()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(provider.searchQuery, 'Contenuto');
+    expect(
+      tester
+          .widget<CupertinoSearchTextField>(find.byType(CupertinoSearchTextField))
+          .controller!
+          .text,
+      'Contenuto',
+    );
+
+    provider.dispose();
+    await tester.runAsync(() async {
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    });
+  });
 }

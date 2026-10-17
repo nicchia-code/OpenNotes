@@ -185,6 +185,162 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a text waiting in the mobile editor is saved when a fast back exit closes the screen',
+    (tester) async {
+      late DatabaseService db;
+      late VaultService vault;
+      late SyncService sync;
+      late NotesProvider provider;
+      late Directory tempDir;
+      final note = Note(
+        id: 'mobile-fast-back-note',
+        title: 'Nota',
+        content: '# Nota\nTesto originale',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      await tester.runAsync(() async {
+        db = DatabaseService();
+        await db.init(inMemory: true);
+        tempDir = await Directory.systemTemp.createTemp('mobile_editor_back_');
+        vault = VaultService();
+        await vault.init(customPath: tempDir.path);
+        sync = SyncService(db, vault);
+        provider = NotesProvider(
+          dbService: db,
+          vaultService: vault,
+          syncService: sync,
+        );
+        await db.upsertNote(note);
+        await provider.init();
+      });
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: SecurityService()),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    PageRouteBuilder<void>(
+                      transitionDuration: Duration.zero,
+                      reverseTransitionDuration: Duration.zero,
+                      pageBuilder: (_, _, _) => Material(
+                        child: MobileNoteEditorScreen(note: note),
+                      ),
+                    ),
+                  ),
+                  child: const Text('Apri'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Apri'));
+      await tester.pumpAndSettle();
+
+      // Type, then leave before the 300 ms wait of the editor ends.
+      await tester.enterText(find.byType(TextField), '# Nota\nTesto digitato');
+      await tester.pump(const Duration(milliseconds: 100));
+      Navigator.of(tester.element(find.byType(MobileNoteEditorScreen))).pop();
+      await tester.pump();
+      expect(find.byType(MobileNoteEditorScreen), findsNothing);
+
+      // The wait ends after the screen has gone: the text is handed over to the provider, which keeps it for the save.
+      await tester.pump(const Duration(milliseconds: 300));
+      final listed = provider.notes.firstWhere((n) => n.id == note.id);
+      expect(listed.content, contains('Testo digitato'));
+      expect(provider.hasWaitingContent(note.id), isTrue);
+      // The provider's own 400 ms save wait ends here, so no timer stays pending when the test finishes.
+      await tester.pump(const Duration(milliseconds: 500));
+
+      provider.dispose();
+      await tester.runAsync(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+    },
+  );
+
+  testWidgets(
+    'mobile editor shows the protected placeholder when another device locks a note that left the list',
+    (tester) async {
+      late DatabaseService db;
+      late VaultService vault;
+      late SyncService sync;
+      late NotesProvider provider;
+      late Directory tempDir;
+      final note = Note(
+        id: 'mobile-remote-lock-note',
+        title: 'Nota',
+        content: '# Nota\nTesto segreto',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      await tester.runAsync(() async {
+        db = DatabaseService();
+        await db.init(inMemory: true);
+        tempDir = await Directory.systemTemp.createTemp('mobile_editor_remote_lock_');
+        vault = VaultService();
+        await vault.init(customPath: tempDir.path);
+        sync = SyncService(db, vault);
+        provider = NotesProvider(
+          dbService: db,
+          vaultService: vault,
+          syncService: sync,
+        );
+        await db.upsertNote(note);
+        await provider.init();
+      });
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: SecurityService()),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Material(child: MobileNoteEditorScreen(note: note)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The note leaves the list by trash, then another device locks it.
+      await tester.runAsync(() => provider.moveToTrash(note.id));
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        final stored = (await db.getNoteById(note.id))!;
+        await db.upsertNote(stored.copyWith(isLocked: true));
+        await provider.refreshNotes();
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Questa nota è protetta'), findsOneWidget);
+      expect(find.text('Visualizza nota'), findsOneWidget);
+      expect(find.textContaining('Testo segreto'), findsNothing);
+
+      provider.dispose();
+      await tester.runAsync(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+    },
+  );
+
 
   testWidgets(
     'lock button asks for the PIN to unlock a note that left the list',
@@ -222,7 +378,7 @@ void main() {
         await db.upsertNote(note);
         await provider.init();
         // The note is protected after the editor was opened from the list.
-        await provider.toggleLock(note.id);
+        await provider.toggleLock(note.id, wasLocked: false);
       });
 
       await tester.pumpWidget(
@@ -245,7 +401,10 @@ void main() {
       await tester.runAsync(() => provider.moveToTrash(note.id));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(CupertinoIcons.lock_fill));
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(CupertinoIcons.lock_fill));
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      });
       await tester.pumpAndSettle();
 
       // Unlocking must ask for the PIN instead of removing the lock silently.
@@ -370,7 +529,7 @@ void main() {
         );
         await db.upsertNote(note);
         await provider.init();
-        await provider.toggleLock(note.id);
+        await provider.toggleLock(note.id, wasLocked: false);
       });
       tester.view.physicalSize = const Size(1200, 1000);
       tester.view.devicePixelRatio = 1;

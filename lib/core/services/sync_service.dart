@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/folder_model.dart';
@@ -9,6 +10,7 @@ import '../models/note_model.dart';
 import 'database_service.dart';
 import 'vault_service.dart';
 import 'sync_triggers.dart';
+import 'sync_log.dart';
 
 /// A change the cloud sync made to the local copy, emitted on [SyncService.remoteChanges].
 sealed class RemoteChange {
@@ -141,6 +143,11 @@ class _SyncRun {
     return session != null && session.user.id == userId;
   }
 
+  /// Throws a timeout once the run's time is up: the local steps are bounded by the run as well (Requirements: tempi massimi).
+  void checkDeadline() {
+    if (!DateTime.now().isBefore(deadline)) throw TimeoutException('sync run');
+  }
+
   void keepNote(Map<String, dynamic> row, {bool forced = false}) {
     final id = row['id'] as String;
     _keep(cloudNotes, id, row);
@@ -198,19 +205,29 @@ final class _Gone extends _PushOutcome {
 /// Category of the error that failed a sync run.
 SyncErrorCategory syncErrorCategoryOf(Object error) {
   if (error is TimeoutException) return SyncErrorCategory.timeout;
-  if (error is SocketException || error is HandshakeException || error is HttpException) {
+  // A connection cut during an answer surfaces as the HTTP client's ClientException, not as a socket error.
+  if (error is SocketException ||
+      error is HandshakeException ||
+      error is HttpException ||
+      error is http.ClientException) {
     return SyncErrorCategory.network;
   }
   if (error is AuthRetryableFetchException) return SyncErrorCategory.network;
   if (error is AuthException) return SyncErrorCategory.sessionExpired;
-  if (error is StorageException) {
-    final status = int.tryParse(error.statusCode ?? '');
-    if (status == 401) return SyncErrorCategory.sessionExpired;
-    if (status != null && (status >= 500 || status == 408 || status == 429)) {
-      return SyncErrorCategory.cloudUnavailable;
-    }
-  }
+  if (error is StorageException) return _categoryOfCloudStatus(error.statusCode) ?? SyncErrorCategory.unexpected;
+  // Database answers carry their HTTP status as the code when the body has no error code (see isCloudRejection).
+  if (error is PostgrestException) return _categoryOfCloudStatus(error.code) ?? SyncErrorCategory.unexpected;
   return SyncErrorCategory.unexpected;
+}
+
+/// Category of a cloud answer from its HTTP status [code], or null when the status does not sort it: 401 is an expired
+/// session; 5xx, 408 and 429 are a cloud that does not answer. Any other value (including a database error code) is null.
+SyncErrorCategory? _categoryOfCloudStatus(String? code) {
+  if (code == null || !RegExp(r'^\d{3}$').hasMatch(code)) return null;
+  final status = int.parse(code);
+  if (status == 401) return SyncErrorCategory.sessionExpired;
+  if (status >= 500 || status == 408 || status == 429) return SyncErrorCategory.cloudUnavailable;
+  return null;
 }
 
 /// Whether the cloud refused a queued change: a permission or constraint error on its row. Network, timeout, session
@@ -251,6 +268,8 @@ class SyncService extends ChangeNotifier {
   final SyncTriggers? _triggers;
   StreamSubscription<SyncSignal>? _triggerSub;
   SyncErrorCategory? _lastFailure;
+  /// The app log where failures are written, read by the user; null leaves them to the debug console only.
+  final SyncLog? _log;
   /// Failed runs in a row; the wait before the next retry grows with them (see [syncRetryWait]).
   int _failedRunsInSeries = 0;
   int _pendingChangeCount = 0;
@@ -269,6 +288,10 @@ class SyncService extends ChangeNotifier {
   bool _fullOnNetwork = false;
   /// The run in progress, so that a request remembered during it can wait for its end.
   Future<void>? _activeRun;
+  /// The first run started by the last sign-in return; completes when that run has ended. A run it starts afterwards is not waited for.
+  Future<void>? _signInRun;
+  /// The sign-in whose first run has not started yet; the next run to start completes it when that run has ended.
+  Completer<void>? _signInRunEnded;
   /// Timeouts of a request to the cloud and of a whole run (Requirements: tempi massimi).
   final Duration requestTimeout;
   final Duration runTimeout;
@@ -279,9 +302,10 @@ class SyncService extends ChangeNotifier {
     this._dbService,
     this._vaultService, {
     SyncTriggers? triggers,
+    SyncLog? log,
     this.requestTimeout = const Duration(seconds: 15),
     this.runTimeout = const Duration(minutes: 2),
-  }) : _triggers = triggers {
+  }) : _triggers = triggers, _log = log {
     _triggerSub = triggers?.signals.listen((signal) {
       // The status shows the connection and the retry wait, which the triggers hold.
       notifyListeners();
@@ -294,7 +318,12 @@ class SyncService extends ChangeNotifier {
           _fullOnNetwork = false;
           _start(full: full);
         case SyncSignal.networkLost:
-          break;
+          // Model: NETWORK_LOST cancels the scheduled retry; the full check that retry owed is remembered for the return
+          // of the network. A run in progress keeps it: its own outcome decides (see _runOnce).
+          if (_retryFull && !_isSyncing) {
+            _fullOnNetwork = true;
+            _retryFull = false;
+          }
         case SyncSignal.syncIntervalElapsed:
           _start(full: false, startsWhileWaiting: false);
         case SyncSignal.syncRetryDue:
@@ -324,6 +353,11 @@ class SyncService extends ChangeNotifier {
   /// When the scheduled retry is due; null when no retry waits.
   DateTime? get retryDueAt => _triggers?.retryDueAt;
   bool get isAwaitingLogin => _awaitingLogin;
+  /// Ends when the first sync run started by the last sign-in has ended, even if it already ended before this was awaited.
+  /// Only meaningful when [signInRunStarted]: a sign-in while offline starts no run.
+  Future<void> get signInRun => _signInRun ?? Future<void>.value();
+  /// Whether the last sign-in started a sync run; false when the sign-in happened while offline.
+  bool get signInRunStarted => _signInRun != null;
   void setAwaitingLogin(bool value) {
     _awaitingLogin = value;
     if (value) _signInError = null;
@@ -435,9 +469,26 @@ class SyncService extends ChangeNotifier {
         // Model (Open): SIGNED_IN with a session closes the channel and opens a new one.
         _setupRealtimeSubscription();
         final initial = event == AuthChangeEvent.initialSession;
-        // Model: INITIAL_SESSION while offline remembers that the return of the network needs a full check.
-        if (initial && (_triggers?.isOffline ?? false)) _fullOnNetwork = true;
+        // Model: an access, like the initial session, while offline starts no run: the full check it asks for is
+        // remembered for the return of the network, and no sign-in run exists to announce.
+        if (_triggers?.isOffline ?? false) {
+          _fullOnNetwork = true;
+          if (event == AuthChangeEvent.signedIn) _signInRun = null;
+          notifyListeners();
+          return;
+        }
+        Completer<void>? signInEnd;
+        if (event == AuthChangeEvent.signedIn) {
+          signInEnd = Completer<void>();
+          _signInRun = signInEnd.future;
+          _signInRunEnded = signInEnd;
+        }
         await _start(full: true, startsWhileWaiting: !initial);
+        // If no run took this sign-in (no account, or the run it joined ended before another one), it ends here.
+        if (signInEnd != null && !signInEnd.isCompleted) {
+          if (identical(_signInRunEnded, signInEnd)) _signInRunEnded = null;
+          signInEnd.complete();
+        }
       } else if (session != null && event == AuthChangeEvent.tokenRefreshed) {
         // A refreshed token starts a sync run (Model: TOKEN_REFRESHED); a channel that was closed is reopened.
         if (_realtimeChannel == null) _setupRealtimeSubscription();
@@ -480,7 +531,7 @@ class SyncService extends ChangeNotifier {
     final connection = RealtimeConnection();
     final changes = RealtimeChangeQueue((error) {
       // CHANGE_NOT_APPLIED: the failure is logged and a sync run recovers the change; the next change is still applied.
-      debugPrint('Realtime change not applied: $error');
+      _log?.record(category: 'realtimeChange', detail: error);
       _start(full: false, startsWhileWaiting: false);
     });
     _realtimeChanges = changes;
@@ -540,7 +591,20 @@ class SyncService extends ChangeNotifier {
       await _removeRemoteNote(record['id'] as String, deletedAt: _recordTime(record), revision: _recordRevision(record));
       return;
     }
-    await applyRemoteNote(Note.fromSupabaseJson(record));
+    final applied = await applyRemoteNote(Note.fromSupabaseJson(record));
+    // A note that replaces the local copy brings its missing attachments with it (Requirements: rules#realtime-channel).
+    if (applied) await _downloadMissingAttachmentsOfRealtimeNote(record['id'] as String);
+  }
+
+  /// Downloads the missing attachments of a note just applied from the realtime channel. Uses its own run budget, and a
+  /// failure is logged and retried by the next sync run.
+  Future<void> _downloadMissingAttachmentsOfRealtimeNote(String noteId) async {
+    final client = _client;
+    final user = currentUser;
+    final note = await _dbService.getNoteById(noteId);
+    if (client == null || user == null || note == null) return;
+    final run = _SyncRun(client, user.id, DateTime.now().add(runTimeout));
+    await _downloadMissingAttachments(run, note.content);
   }
 
   /// REMOTE_NOTE_DELETED. Unless a queued change of the note made after the cloud delete still waits to be sent (that
@@ -587,12 +651,12 @@ class SyncService extends ChangeNotifier {
         ? remoteNote.folderId
         : Folder.defaultNotesId;
     final downloaded = remoteNote.copyWith(folderId: folderId);
-    // A queued delete wins unless the cloud changed the note after the delete was queued; then the cloud
-    // version replaces the note and the queued delete is dropped. Otherwise the next sync run sends the delete.
+    // A queued delete wins only over an older cloud copy: a cloud copy made at the same time or later replaces the note
+    // and drops the queued delete. Otherwise the next sync run sends the delete.
     // ponytail: a delete queued during the file write below still lands; re-check after the write if that race matters.
     final deleteQueuedAt = await _dbService.pendingDeleteQueuedAt('note', remoteNote.id);
     if (deleteQueuedAt != null) {
-      if (!remoteNote.updatedAt.isAfter(deleteQueuedAt)) return false;
+      if (remoteNote.updatedAt.isBefore(deleteQueuedAt)) return false;
       await _dbService.removeSyncActionsFor('note', remoteNote.id, action: 'delete');
     }
     final saved = downloaded.copyWith(filePath: await _vaultService.saveNote(downloaded));
@@ -638,6 +702,7 @@ class SyncService extends ChangeNotifier {
       await _removeRemoteFolder(record['id'] as String, deletedAt: _recordTime(record), revision: _recordRevision(record));
       return;
     }
+    // A queued delete of the folder yields to a cloud copy not older than it: _storeCloudFolder decides.
     if (await _storeCloudFolder(Folder.fromSupabaseJson(record))) {
       notifyListeners();
       _remoteChanges.add(const CloudFolderChanged());
@@ -651,6 +716,7 @@ class SyncService extends ChangeNotifier {
     // A placeholder on a revision the device already has is an echo of its own send or an older delete: nothing happens.
     if (_alreadySeen(remoteRevision: revision, localRevision: local?.cloudRevision)) return;
     if (deletedAt != null && await _hasNewerQueuedFolderChange(id, deletedAt)) return;
+    await _rewriteNotesMovedFrom(id);
     await _dbService.deleteFolder(id);
     // A change still queued for the deleted folder stays: the next sync sends it under "vince l'ultima modifica" (it is
     // sent only if it is strictly newer than the cloud version), so a newer rename recreates the folder in the cloud.
@@ -658,8 +724,17 @@ class SyncService extends ChangeNotifier {
     _remoteChanges.add(const CloudFolderChanged());
   }
 
+  /// Rewrites the vault copies of the notes of a folder the cloud deleted, so they name Notes, where they move to.
+  /// Runs before the folder is deleted: a failed write throws and the next run tries again.
+  Future<void> _rewriteNotesMovedFrom(String folderId) async {
+    final notes = await _dbService.getNotes(folderId: folderId, isDeleted: null);
+    await _vaultService.rewriteMovedNotes(_dbService, [
+      for (final note in notes) note.copyWith(folderId: Folder.defaultNotesId),
+    ]);
+  }
+
   /// Stores a cloud version of a folder unless a queued local change of it is strictly newer than that version: then
-  /// the local folder stays. A queued delete of the folder is dropped only when the cloud version is newer than it.
+  /// the local folder stays. A queued delete of the folder is dropped unless the cloud version is older than it.
   /// Returns whether the local folder was stored.
   Future<bool> _storeCloudFolder(Folder remote, {bool force = false}) async {
     // An echo of this device's own send, or a version already stored, is not applied again.
@@ -673,7 +748,7 @@ class SyncService extends ChangeNotifier {
     }
     final deletedAt = await _dbService.getPendingSyncDeleteTime('folder', remote.id);
     if (deletedAt != null) {
-      if (!remote.updatedAt.isAfter(deletedAt)) return false;
+      if (remote.updatedAt.isBefore(deletedAt)) return false;
       await _dbService.removePendingSyncDeletes('folder', remote.id);
     }
     if (await _hasNewerQueuedFolderChange(remote.id, remote.updatedAt)) return false;
@@ -706,6 +781,7 @@ class SyncService extends ChangeNotifier {
   /// Local notes belong to the account that synced them. When another account syncs,
   /// the notes it already uploaded are removed here (they come back with the previous account);
   /// their unsent changes are discarded too, never sent to the new account (Model: pending-change, Discarded).
+  /// Queued deletes of such notes removed for good before the switch are discarded too.
   /// Notes not yet uploaded are never dropped. Folders are not removed here: the pull removes the synced
   /// folders the cloud lacks, and keeps the ones with unsent changes.
   Future<void> _adoptAccount(String userId) async {
@@ -719,6 +795,7 @@ class SyncService extends ChangeNotifier {
         await _vaultService.deleteNoteFileIfUnused(_dbService, note.filePath);
         _remoteChanges.add(CloudNoteRemoved(note.id));
       }
+      await _dbService.removeQueuedDeletesOfPurgedSyncedNotes();
       await _dbService.forgetCloudState();
       await prefs.remove(lastRevisionKey);
     }
@@ -757,7 +834,12 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
     var nextFull = full;
     try {
-      while (await _runOnce(nextFull) && _rerunWanted) {
+      while (true) {
+        // The run starting now is the first one started after a sign-in still waiting: it ends that sign-in run.
+        final signInEnd = _signInRunEnded;
+        _signInRunEnded = null;
+        final completed = await _runOnce(nextFull).whenComplete(() => signInEnd?.complete());
+        if (!completed || !_rerunWanted) break;
         nextFull = _rerunFull;
         _rerunWanted = false;
         _rerunFull = false;
@@ -797,8 +879,9 @@ class SyncService extends ChangeNotifier {
       await _refreshPendingChangeCount();
       return false;
     } catch (error) {
-      debugPrint('Sync error: $error');
-      _lastFailure = syncErrorCategoryOf(error);
+      final category = syncErrorCategoryOf(error);
+      _lastFailure = category;
+      await _log?.record(category: category.name, detail: error);
       // Waits here so that requests arriving meanwhile are still remembered and join the retry below.
       await _refreshPendingChangeCount();
       final needsFull = full || _rerunFull;
@@ -807,6 +890,7 @@ class SyncService extends ChangeNotifier {
       if (_triggers?.isOffline ?? false) {
         // Model: FAILED → Offline. No attempt is scheduled; a full check is remembered for the return of the network.
         _fullOnNetwork = _fullOnNetwork || needsFull;
+        _retryFull = false;
       } else {
         // Model: FAILED → Waiting to retry.
         _retryFull = _retryFull || needsFull;
@@ -841,7 +925,6 @@ class SyncService extends ChangeNotifier {
     run.chosenNotes.addAll(_noteVersionRequests);
     run.chosenFolders.addAll(_folderVersionRequests);
 
-    await _uploadAttachmentsOfSyncedNotes(run);
     await _pushQueue(run);
     await _readCloud(run, since: run.readAll ? null : lastRevision);
     if (run.readAll) await _adoptRevisions(run);
@@ -855,6 +938,8 @@ class SyncService extends ChangeNotifier {
   /// Sends the queued changes that are not set aside, oldest first (Model: Pushing changes). A change the cloud refuses
   /// is counted on it, and the run goes on with the others.
   Future<void> _pushQueue(_SyncRun run) async {
+    // The attachments of synced notes that failed before are retried here, inside the queue step (Requirements: sync-run).
+    await _uploadAttachmentsOfSyncedNotes(run);
     // Set-aside changes stay queued but are not sent until the user decides (Model: pending-change, Set aside).
     // Changes queued while the queue is being sent (a save made by a listener, or a delete queued while a save was in
     // flight) go in the same run: each pass takes the items not sent yet, until a pass finds none.
@@ -931,10 +1016,11 @@ class SyncService extends ChangeNotifier {
         break;
       case _CloudWon(row: final cloud):
         // The cloud copy is newer than the save: the save is discarded (CHANGE_DISCARDED), and a deleted copy removes
-        // the note here (CLOUD_NOTE_REMOVED); a live copy replaces the local one with the pull.
+        // the note here (CLOUD_NOTE_REMOVED) unless a newer save of it waits in the queue: that save stays and is sent
+        // in this run; a live copy replaces the local one with the pull.
         await _dbService.removeSyncActionIfUnchanged(item);
         if (cloud['purged_at'] != null) {
-          await _removeRemoteNote(id, revision: _recordRevision(cloud));
+          await _removeRemoteNote(id, deletedAt: _recordTime(cloud), revision: _recordRevision(cloud));
         } else {
           run.keepNote(cloud, forced: true);
         }
@@ -994,12 +1080,16 @@ class SyncService extends ChangeNotifier {
     var detachedFromParent = false;
     final _PushOutcome outcome;
     if (item['action'] == 'delete') {
-      final payload = jsonDecode(item['payload'] as String) as Map<String, dynamic>;
       final at = queuedAt.toUtc().toIso8601String();
+      // Read before the placeholder is written: the queue carries only the id, so the placeholder keeps the cloud copy's name.
+      final before = await _cloud(
+        run,
+        () => run.client.from('folders').select('name').eq('id', id).maybeSingle(),
+      );
       outcome = await _pushRow(
         run,
         table: 'folders',
-        row: {'id': id, 'name': payload['name'] as String? ?? '', 'updated_at': at, 'purged_at': at},
+        row: {'id': id, 'name': before?['name'] as String? ?? '', 'updated_at': at, 'purged_at': at},
         baseRevision: baseRevision,
         localTime: queuedAt,
       );
@@ -1199,6 +1289,8 @@ class SyncService extends ChangeNotifier {
           action: 'upsert',
           payload: jsonEncode(local.toSupabaseJson(run.userId)),
         );
+        // Every queueing asks for a run at once; during this run the request is remembered for the next one.
+        _start(full: false);
       } else {
         run.forcedNotes.add(local.id);
       }
@@ -1218,6 +1310,7 @@ class SyncService extends ChangeNotifier {
           action: 'upsert',
           payload: jsonEncode(local.toSupabaseJson(run.userId)),
         );
+        _start(full: false);
       } else {
         run.forcedFolders.add(local.id);
       }
@@ -1265,13 +1358,16 @@ class SyncService extends ChangeNotifier {
   Future<void> _sendUnsyncedNotes(_SyncRun run) async {
     final setAside = await _dbService.getSetAsideNoteIds();
     for (final note in await _dbService.getNotes(isDeleted: null)) {
+      run.checkDeadline();
       if (note.syncedAt != null || setAside.contains(note.id) || run.refusedNotes.contains(note.id)) continue;
       await _sendUnsyncedNote(run, note.id);
     }
   }
 
-  /// Sends one never-synced note. A welcome note is removed instead when the cloud already has notes. The note is marked
-  /// as synced at the moment the cloud accepts it, on the revision the cloud gave it.
+  /// Sends one never-synced note (Model: Sending unsynced notes). A welcome note is removed instead when the cloud already
+  /// has notes. The note is queued as a save before it is sent, so a refusal by the cloud is counted on that item like the
+  /// refusal of any queued change, and the run goes on. The item is removed when the cloud accepts the note, which is
+  /// then marked as synced at that moment, on the revision the cloud gave it.
   Future<void> _sendUnsyncedNote(_SyncRun run, String noteId) async {
     var current = await _dbService.getNoteById(noteId);
     while (current != null && current.syncedAt == null) {
@@ -1283,16 +1379,39 @@ class SyncService extends ChangeNotifier {
       }
       final sent = current;
       await _uploadMissingAttachments(run, sent.content);
-      final outcome = await _pushRow(
-        run,
-        table: 'notes',
-        row: _notePushRow(sent.toSupabaseJson(run.userId)),
-        baseRevision: sent.cloudRevision,
-        localTime: sent.updatedAt,
+      // A change of the note already queued is the one counted on; otherwise the save is queued now.
+      if (!await _dbService.hasPendingSyncAction(entityType: 'note', entityId: noteId)) {
+        await _dbService.queueSyncAction(
+          entityType: 'note',
+          entityId: noteId,
+          action: 'upsert',
+          payload: jsonEncode(sent.toSupabaseJson(run.userId)),
+        );
+      }
+      final item = (await _dbService.getPendingSyncActions()).firstWhere(
+        (queued) => queued['entity_type'] == 'note' && queued['entity_id'] == noteId,
       );
+      final _PushOutcome outcome;
+      try {
+        outcome = await _pushRow(
+          run,
+          table: 'notes',
+          row: _notePushRow(sent.toSupabaseJson(run.userId)),
+          baseRevision: sent.cloudRevision,
+          localTime: sent.updatedAt,
+        );
+      } on PostgrestException catch (error) {
+        // Refused by the cloud: counted on the queued item, which is set aside after the third refusal in a row.
+        if (!isCloudRejection(error)) rethrow;
+        debugPrint('Unsynced note refused: ${error.message}');
+        run.refusedNotes.add(noteId);
+        await _dbService.recordRejectedSyncAction(item, error.message);
+        return;
+      }
       switch (outcome) {
         case _Accepted(:final revision):
           run.pushedNotes.add(noteId);
+          await _dbService.removeSyncActionIfUnchanged(item);
           final stored = await _dbService.getNoteById(noteId);
           if (stored == null) return;
           if (stored.updatedAt.isAtSameMomentAs(sent.updatedAt)) {
@@ -1304,6 +1423,7 @@ class SyncService extends ChangeNotifier {
           current = stored;
           break;
         case _CloudWon(row: final cloud):
+          await _dbService.removeSyncActionIfUnchanged(item);
           if (cloud['purged_at'] != null) {
             await _removeRemoteNote(noteId, revision: _recordRevision(cloud));
           } else {
@@ -1311,6 +1431,7 @@ class SyncService extends ChangeNotifier {
           }
           return;
         case _Gone():
+          await _dbService.removeSyncActionIfUnchanged(item);
           return;
         case _Unsettled():
           return;
@@ -1333,6 +1454,7 @@ class SyncService extends ChangeNotifier {
   /// revision this device already has is not applied again; a deletion placeholder removes the folder.
   Future<void> _applyCloudFolders(_SyncRun run) async {
     for (final entry in run.cloudFolders.entries) {
+      run.checkDeadline();
       final row = entry.value;
       if (row['purged_at'] != null) {
         await _removeRemoteFolder(entry.key, deletedAt: _recordTime(row), revision: _recordRevision(row));
@@ -1348,6 +1470,7 @@ class SyncService extends ChangeNotifier {
   /// Applies the cloud notes (Model: Pulling). A note whose revision this device already has is not applied again.
   Future<void> _applyCloudNotes(_SyncRun run) async {
     for (final entry in run.cloudNotes.entries) {
+      run.checkDeadline();
       final row = entry.value;
       if (row['purged_at'] != null) {
         await _removeRemoteNote(entry.key, deletedAt: _recordTime(row), revision: _recordRevision(row));
@@ -1363,6 +1486,7 @@ class SyncService extends ChangeNotifier {
     // The list read above came with the session; without it the rows are not removed.
     if (!run.hasSession) throw const _SignedOutDuringRun();
     for (final local in await _dbService.getNotes(isDeleted: null)) {
+      run.checkDeadline();
       if (local.syncedAt == null || run.pushedNotes.contains(local.id) || run.fullNoteIds.contains(local.id)) continue;
       await _removeRemoteNote(local.id);
     }
@@ -1370,6 +1494,7 @@ class SyncService extends ChangeNotifier {
     for (final local in await _dbService.getFolders()) {
       if (local.isSystem || run.pushedFolders.contains(local.id) || run.fullFolderIds.contains(local.id)) continue;
       if (await _dbService.hasPendingSyncAction(entityType: 'folder', entityId: local.id)) continue;
+      await _rewriteNotesMovedFrom(local.id);
       await _dbService.deleteFolder(local.id);
       removedFolder = true;
     }
@@ -1388,7 +1513,7 @@ class SyncService extends ChangeNotifier {
   }
 
   /// Uploads the attachments of [content] that the cloud does not have yet, to the user's folder in the bucket. A failed
-  /// upload is logged and tried again by the next run; it never fails the run (Model: sync-run FAILED).
+  /// upload is logged and tried again by the next run; a timeout fails the run (Model: sync-run FAILED).
   Future<void> _uploadMissingAttachments(_SyncRun run, String content) async {
     for (final ref in attachmentRefs(content)) {
       if (run.cloudAttachments.contains(ref)) continue;
@@ -1404,29 +1529,37 @@ class SyncService extends ChangeNotifier {
         run.cloudAttachments.add(ref);
         await _dbService.addCloudAttachment(ref);
       } catch (error) {
-        debugPrint('Attachment upload failed for $ref: $error');
+        if (error is TimeoutException) rethrow;
+        await _log?.record(category: 'attachmentUpload', detail: '$ref: $error');
       }
     }
   }
 
   /// Downloads the attachments of every note that are missing from the vault. A failed download is logged and tried again
-  /// by the next run; it never fails the run.
+  /// by the next run; a timeout fails the run.
   Future<void> _downloadAttachmentsOfAllNotes(_SyncRun run) async {
     for (final note in await _dbService.getNotes(isDeleted: null)) {
-      for (final ref in attachmentRefs(note.content)) {
-        final file = _vaultService.resolveAttachment(ref);
-        if (await file.exists()) continue;
-        try {
-          final bytes = await _cloud(
-            run,
-            () => run.client.storage.from(_attachmentBucket).download('${run.userId}/${_attachmentName(ref)}'),
-          );
-          await file.writeAsBytes(bytes);
-          run.cloudAttachments.add(ref);
-          await _dbService.addCloudAttachment(ref);
-        } catch (error) {
-          debugPrint('Attachment download failed for $ref: $error');
-        }
+      await _downloadMissingAttachments(run, note.content);
+    }
+  }
+
+  /// Downloads the attachments that [content] refers to and that are missing from the vault. A failed download is logged
+  /// and tried again by the next run; a timeout fails the caller.
+  Future<void> _downloadMissingAttachments(_SyncRun run, String content) async {
+    for (final ref in attachmentRefs(content)) {
+      final file = _vaultService.resolveAttachment(ref);
+      if (await file.exists()) continue;
+      try {
+        final bytes = await _cloud(
+          run,
+          () => run.client.storage.from(_attachmentBucket).download('${run.userId}/${_attachmentName(ref)}'),
+        );
+        await file.writeAsBytes(bytes);
+        run.cloudAttachments.add(ref);
+        await _dbService.addCloudAttachment(ref);
+      } catch (error) {
+        if (error is TimeoutException) rethrow;
+        await _log?.record(category: 'attachmentDownload', detail: '$ref: $error');
       }
     }
   }
@@ -1434,11 +1567,12 @@ class SyncService extends ChangeNotifier {
   /// The file name of an attachment inside the user's folder in the bucket.
   static String _attachmentName(String ref) => ref.substring('attachments/'.length);
 
-  /// Removes the bucket files of a deleted note that no other cloud note uses; a failure is logged and never fails the run.
+  /// Removes the bucket files of a deleted note that no other cloud note uses; a failure other than a timeout is logged.
   Future<void> _removeUnusedAttachmentsSafely(_SyncRun run, String deletedContent) async {
     try {
       await _cloud(run, () => _removeUnusedAttachments(run.client, run.userId, deletedContent));
     } catch (error) {
+      if (error is TimeoutException) rethrow;
       debugPrint('Attachment removal failed: $error');
     }
   }
@@ -1515,7 +1649,7 @@ class SyncService extends ChangeNotifier {
         entityType: 'folder',
         entityId: folder.id,
         action: 'delete',
-        payload: jsonEncode(folder.toSupabaseJson(user?.id ?? '')),
+        payload: jsonEncode({'id': folder.id}),
       );
     } else {
       await _dbService.queueSyncAction(

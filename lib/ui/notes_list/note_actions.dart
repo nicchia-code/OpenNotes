@@ -64,7 +64,10 @@ class NoteActions {
   }) async {
     final provider = context.read<NotesProvider>();
     final security = context.read<SecurityService>();
-    if (note.isLocked &&
+    // Every PIN and lock decision uses the stored note, not the copy the menu or the editor was given.
+    final stored = await provider.fetchNote(note.id);
+    if (stored == null) return false;
+    if (stored.isLocked &&
         (action == NoteMenuAction.duplicate ||
             action == NoteMenuAction.share ||
             action == NoteMenuAction.export)) {
@@ -75,26 +78,23 @@ class NoteActions {
       case NoteMenuAction.pin:
         await provider.togglePin(note.id);
       case NoteMenuAction.lock:
-        if (note.isLocked) {
+        if (stored.isLocked) {
           final unlocked = await LockNoteDialog.showUnlockDialog(
             context,
             security,
           );
           if (unlocked) {
-            await provider.toggleLock(note.id);
+            await provider.toggleLock(note.id, wasLocked: true);
           }
         } else {
           if (!security.hasMasterPin &&
               !await LockNoteDialog.showSetPinDialog(context, security)) {
             return false;
           }
-          await provider.toggleLock(note.id);
+          await provider.toggleLock(note.id, wasLocked: false);
           security.relockNote(note.id);
         }
       case NoteMenuAction.duplicate:
-        // Copy what is on screen: hand over and write the edit still waiting in the editor.
-        provider.deliverWaitingEdits();
-        await provider.flushPendingContent();
         return await provider.duplicateNote(note.id) != null;
       case NoteMenuAction.move:
         final destination = await showFolderPicker(
@@ -194,7 +194,7 @@ class NoteActions {
       case NoteMenuAction.restore:
         await provider.restoreFromTrash(note.id);
       case NoteMenuAction.permanentlyDelete:
-        if (await confirmPermanentDelete(context, note)) {
+        if (await confirmPermanentDelete(context, stored)) {
           final deleted = await provider.permanentlyDeleteNote(note.id);
           if (deleted) onRemoved?.call();
           return deleted;

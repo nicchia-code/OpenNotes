@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import '../../core/models/note_model.dart';
 import '../../core/state/notes_provider.dart';
 import '../theme/apple_theme.dart';
+import '../../core/services/sync_service.dart';
+import '../sync/sync_state_glyph.dart';
 
 /// Single Note Card in the middle list, mimicking Apple Notes macOS Sequoia layout.
 class NoteCard extends StatelessWidget {
@@ -154,9 +156,10 @@ class NoteCard extends StatelessWidget {
                     ),
                     if (isSetAside) ...[
                       const SizedBox(width: 4),
-                      Icon(
-                        Icons.cloud_off,
+                      SyncStateGlyph(
+                        state: SyncRunState.offline,
                         color: secondaryColor,
+                        size: 14,
                       ),
                     ],
                     const SizedBox(width: 8),

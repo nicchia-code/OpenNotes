@@ -122,6 +122,16 @@ class VaultService {
     await File(remaining.first.filePath!).writeAsString(serializeNoteToMarkdown(remaining.first));
   }
 
+  /// Rewrites the vault copy of each note moved out of a folder that is being deleted, so the file names the folder
+  /// the note is in now: [movedNotes] already carry their new folder. A path that differs from the recorded one is
+  /// recorded in [db]. A failed write throws, and the caller then keeps the folder.
+  Future<void> rewriteMovedNotes(DatabaseService db, List<Note> movedNotes) async {
+    for (final note in movedNotes) {
+      final path = await saveNote(note);
+      if (path != note.filePath) await db.upsertNote(note.copyWith(filePath: path));
+    }
+  }
+
   /// Tells whether two recorded paths name the same file on disk. Paths that differ only
   /// by letter case name one file on case-insensitive systems, so the text of the path is
   /// not enough. A path with no file behind it names no file shared with another.

@@ -21,7 +21,16 @@ class NotesListView extends StatefulWidget {
 }
 
 class _NotesListViewState extends State<NotesListView> {
-  final TextEditingController _searchController = TextEditingController();
+  late final TextEditingController _searchController;
+
+  @override
+  void initState() {
+    super.initState();
+    // The layout can switch while a search is active: show the query still filtering the list.
+    _searchController = TextEditingController(
+      text: context.read<NotesProvider>().searchQuery,
+    );
+  }
 
   @override
   void dispose() {

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:open_notes/core/services/database_service.dart';
+import 'package:open_notes/core/services/sync_log.dart';
 import 'package:open_notes/core/services/sync_service.dart';
 import 'package:open_notes/core/services/sync_triggers.dart';
 import 'package:open_notes/core/services/vault_service.dart';
@@ -48,11 +49,13 @@ void main() {
       initiallyVisible: true,
     );
     addTearDown(triggers.dispose);
+    final syncLog = SyncLog(File('${tempDir.path}/sync_log.txt'));
     final syncService = SyncService(
       dbService,
       vaultService,
       triggers: triggers,
       requestTimeout: const Duration(milliseconds: 300),
+      log: syncLog,
     );
     addTearDown(syncService.dispose);
 
@@ -71,6 +74,7 @@ void main() {
     expect(syncService.lastFailure, SyncErrorCategory.timeout);
     expect(syncService.runState, SyncRunState.waitingToRetry);
     expect(failedAfter, lessThan(const Duration(seconds: 2)), reason: 'the request gave up at its limit, before the retry');
+    expect(await syncLog.read(), contains('[timeout]'), reason: 'the failed run is written to the app log');
 
     // The retry starts by itself, after the first wait, and completes.
     await waitUntil(() => cloud.noteReads.length > readsBefore + 1 && !syncService.isSyncing);

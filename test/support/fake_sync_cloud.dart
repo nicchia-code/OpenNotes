@@ -27,6 +27,10 @@ class FakeSyncCloud {
   final List<String> storageUploads = [];
   /// How many of the next attachment uploads the storage answers with a server error.
   int storageUploadsRefused = 0;
+  /// Makes the next attachment upload never answer.
+  bool hangNextStorageUpload = false;
+  /// Note ids the cloud refuses to write, with a permission error.
+  final Set<String> refusedNoteIds = {};
   int _revision = 100;
 
   int get port => _server.port;
@@ -43,6 +47,9 @@ class FakeSyncCloud {
   void putFolder(Map<String, dynamic> row) => folders[row['id'] as String] = {...row, 'revision': ++_revision};
 
   Future<void> close() => _server.close(force: true);
+
+  /// The user the password sign-in route signs in as; set it before the sign-in.
+  String? signInUserId;
 
   /// A row of the notes table, as the cloud returns it for [userId].
   static Map<String, dynamic> noteRow(String userId, String id, String title, DateTime updatedAt,
@@ -77,7 +84,10 @@ class FakeSyncCloud {
       final table = isNote ? notes : folders;
       if (isNote) noteWrites.add((id, base));
       final current = table[id];
-      if (base != current?['revision']) {
+      if (isNote && refusedNoteIds.contains(id)) {
+        response.statusCode = 400;
+        response.write(jsonEncode({'message': 'permission denied for table notes', 'code': '42501'}));
+      } else if (base != current?['revision']) {
         response.write(jsonEncode({'status': 'conflict', 'row': current}));
       } else {
         row['revision'] = ++_revision;
@@ -100,6 +110,11 @@ class FakeSyncCloud {
       response.write(jsonEncode(_select(folders.values, request.uri.queryParameters)));
     } else if (path.startsWith('/storage/v1/object/note-attachments/') && request.method == 'POST') {
       storageUploads.add(path);
+      if (hangNextStorageUpload) {
+        hangNextStorageUpload = false;
+        await _never.future;
+        return;
+      }
       if (storageUploadsRefused > 0) {
         storageUploadsRefused--;
         response.statusCode = 500;
@@ -107,6 +122,8 @@ class FakeSyncCloud {
       } else {
         response.write(jsonEncode({'Key': path}));
       }
+    } else if (path == '/auth/v1/token' && request.uri.queryParameters['grant_type'] == 'password') {
+      response.write(jsonEncode(sessionFor(signInUserId!)));
     } else if (path == '/auth/v1/logout') {
       response.statusCode = 204;
     } else {
@@ -137,26 +154,31 @@ class FakeSyncCloud {
   }
 }
 
-/// Shared preferences of a signed-in user: the session the Supabase client restores when it starts.
-Map<String, Object> signedInPreferences(String userId, {Map<String, Object> extra = const {}}) {
+/// The session JSON the Supabase client stores and restores for [userId], expiring in an hour.
+Map<String, dynamic> sessionFor(String userId) {
   final expiresAt = DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000;
   return {
-    'sb-127-auth-token': jsonEncode({
-      'access_token': 'test-access',
-      'token_type': 'bearer',
-      'expires_in': 3600,
-      'expires_at': expiresAt,
-      'refresh_token': 'test-refresh',
-      'user': {
-        'id': userId,
-        'aud': 'authenticated',
-        'role': 'authenticated',
-        'email': 'test@example.com',
-        'app_metadata': <String, dynamic>{},
-        'user_metadata': <String, dynamic>{},
-        'created_at': '2024-01-01T00:00:00Z',
-      },
-    }),
+    'access_token': 'test-access',
+    'token_type': 'bearer',
+    'expires_in': 3600,
+    'expires_at': expiresAt,
+    'refresh_token': 'test-refresh',
+    'user': {
+      'id': userId,
+      'aud': 'authenticated',
+      'role': 'authenticated',
+      'email': 'test@example.com',
+      'app_metadata': <String, dynamic>{},
+      'user_metadata': <String, dynamic>{},
+      'created_at': '2024-01-01T00:00:00Z',
+    },
+  };
+}
+
+/// Shared preferences of a signed-in user: the session the Supabase client restores when it starts.
+Map<String, Object> signedInPreferences(String userId, {Map<String, Object> extra = const {}}) {
+  return {
+    'sb-127-auth-token': jsonEncode(sessionFor(userId)),
     ...extra,
   };
 }

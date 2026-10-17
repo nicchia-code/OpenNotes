@@ -39,6 +39,9 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
   /// Changes the sync has set aside, listed under "Non sincronizzate" in the signed-in view.
   List<SetAsideChange> _setAside = const [];
   int _setAsideLoad = 0;
+  /// Counts the sign-in requests; a request superseded by a newer one stops updating the window.
+  int _signInAttempt = 0;
+  static const _browserOpeningMessage = 'Apertura browser per autenticazione Google...';
 
   @override
   void initState() {
@@ -100,24 +103,28 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
   }
 
   Future<void> _handleGoogleSignIn(AuthService auth) async {
+    // A new request supersedes the one still awaiting the browser: only the latest attempt updates the window.
+    final attempt = ++_signInAttempt;
+    bool isCurrent() => mounted && attempt == _signInAttempt;
     setState(() {
       _isConnecting = true;
-      _statusMessage = 'Apertura browser per autenticazione Google...';
+      _statusMessage = _browserOpeningMessage;
       _isError = false;
       _signInSync = _SignInSync.none;
     });
 
     try {
       final success = await auth.signInWithGoogle();
-      if (!success && mounted) {
+      if (!isCurrent()) return;
+      if (!success) {
         setState(() {
           _statusMessage = 'Accesso Google non completato.';
           _isError = true;
         });
-      } else if (mounted) {
+      } else {
         final sync = context.read<SyncService>();
-        await _waitUntil(sync, () => !sync.isAwaitingLogin);
-        if (!mounted) return;
+        await _waitUntil(sync, () => !sync.isAwaitingLogin || attempt != _signInAttempt);
+        if (!isCurrent()) return;
         if (!sync.isAuthenticated) {
           setState(() {
             _statusMessage = 'Accesso Google non completato.';
@@ -125,19 +132,24 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
           });
           return;
         }
+        if (!sync.signInRunStarted) {
+          // Model: an access while offline starts no sync run, so the window announces no outcome; the offline status
+          // of the sync shows instead.
+          setState(() => _statusMessage = null);
+          return;
+        }
         setState(() {
           _statusMessage = null;
           _signInSync = _SignInSync.running;
         });
-        // The run the sign-in started is awaited, not repeated: it is already running when the wait for the
-        // sign-in ends, and the window waits for its real end, including the retry it schedules when it fails.
-        await _waitUntil(sync, () => sync.isSyncing);
-        await _waitUntil(sync, () => !sync.isSyncing);
-        if (!mounted) return;
+        // The window waits for the end of the first run the sign-in started, not for the runs that run starts after it,
+        // which the sync status shows. That run may already have ended.
+        await sync.signInRun;
+        if (!isCurrent()) return;
         setState(() => _signInSync = _SignInSync.finished);
       }
     } catch (e) {
-      if (mounted) {
+      if (isCurrent()) {
         // Missing build variables: show the exact notice, without the "Errore:" prefix.
         final notice = context.read<SyncService>().notConfiguredMessage;
         setState(() {
@@ -146,7 +158,7 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
         });
       }
     } finally {
-      if (mounted) {
+      if (isCurrent()) {
         setState(() => _isConnecting = false);
       }
     }
@@ -156,7 +168,8 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
   ({String text, bool isError})? _signInSyncLine(SyncService sync) => switch (_signInSync) {
         _SignInSync.none => null,
         _SignInSync.running => (text: 'Accesso completato! Sincronizzazione in corso...', isError: false),
-        _SignInSync.finished when sync.isSyncing => (text: syncStatusText(SyncRunState.running), isError: false),
+        // A retry of a failed sign-in run shows it running; a later run after a success leaves the outcome announced.
+        _SignInSync.finished when sync.isSyncing && sync.lastFailure != null => (text: syncStatusText(SyncRunState.running), isError: false),
         _SignInSync.finished => (
             text: signInSyncOutcomeMessage(sync.lastFailure, sync.retryDueAt),
             isError: sync.lastFailure != null,
@@ -187,9 +200,11 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final retryDueAt = sync.retryDueAt;
     final signInLine = _signInSyncLine(sync);
+    // Model (Awaiting login): the window keeps saying the browser is being opened until the return.
+    final awaitingBrowser = sync.isAwaitingLogin && !auth.isAuthenticated;
     final statusText = sync.signInError != null
         ? 'Accesso non completato: ${sync.signInError}'
-        : (signInLine?.text ?? _statusMessage);
+        : (signInLine?.text ?? _statusMessage ?? (awaitingBrowser ? _browserOpeningMessage : null));
     final statusIsError = sync.signInError != null || (signInLine?.isError ?? _isError);
 
     return Dialog(
@@ -450,13 +465,30 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
 
               if (statusText != null) ...[
                 const SizedBox(height: 14),
-                Text(
-                  statusText,
-                  style: TextStyle(
-                    color: statusIsError ? CupertinoColors.destructiveRed : CupertinoColors.activeGreen,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                  ),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        statusText,
+                        style: TextStyle(
+                          color: statusIsError ? CupertinoColors.destructiveRed : CupertinoColors.activeGreen,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    if (awaitingBrowser) ...[
+                      const SizedBox(width: 16),
+                      CupertinoButton(
+                        padding: EdgeInsets.zero,
+                        child: const Text(
+                          "Riprova l'accesso",
+                          style: TextStyle(fontSize: 13, color: CupertinoColors.activeBlue),
+                        ),
+                        onPressed: () => _handleGoogleSignIn(auth),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ],

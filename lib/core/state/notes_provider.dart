@@ -509,11 +509,13 @@ class NotesProvider extends ChangeNotifier {
     await refreshNotes();
   }
 
-  /// Toggles locked state of a note
-  Future<void> toggleLock(String noteId) async {
+  /// Toggles locked state of a note, only while the stored note is still in [wasLocked] state: the caller decided
+  /// on that state (and any PIN) before, so a change made meanwhile is never flipped blindly. Returns false and writes
+  /// nothing when the state differs or the write fails.
+  Future<bool> toggleLock(String noteId, {required bool wasLocked}) async {
     await _settleContent();
     final note = await _dbService.getNoteById(noteId);
-    if (note == null) return;
+    if (note == null || note.isLocked != wasLocked) return false;
 
     final updated = note.copyWith(
       isLocked: !note.isLocked,
@@ -521,10 +523,11 @@ class NotesProvider extends ChangeNotifier {
     );
 
     final savedLock = await _writeToVault(updated);
-    if (savedLock == null) return;
+    if (savedLock == null) return false;
     await _dbService.upsertNote(savedLock);
     await _syncService.notifyNoteChanged(savedLock);
     await refreshNotes();
+    return true;
   }
 
   /// Moves note to trash. The file is written first: if it cannot be written, the note stays where it was.
@@ -601,6 +604,8 @@ class NotesProvider extends ChangeNotifier {
 
   /// Duplicates an active note and selects the new copy.
   Future<Note?> duplicateNote(String noteId) async {
+    // Copy what is on screen: hand over the waiting edit and wait for a write already running.
+    await _settleContent();
     final note = await _dbService.getNoteById(noteId);
     if (note == null || note.isDeleted) return null;
     const uuid = Uuid();
@@ -624,7 +629,10 @@ class NotesProvider extends ChangeNotifier {
       }
       content = jsonEncode(blocks);
     } else if (content.trimLeft().startsWith('# ')) {
-      content = content.replaceFirst(RegExp(r'^\s*#\s+[^\n]*'), '# $copyTitle');
+      content = content.replaceFirstMapped(
+        RegExp(r'^([ \t\r\n]*)#[ \t]+[^\n]*'),
+        (match) => '${match.group(1)}# $copyTitle',
+      );
     } else {
       content = '# $copyTitle\n$content';
     }
@@ -720,20 +728,32 @@ class NotesProvider extends ChangeNotifier {
 
   /// Deletes a folder
   Future<void> deleteFolder(String folderId) async {
+    // The notes are read from the newest version of their content, so their vault copies are written from it.
+    await _settleContent();
     final folder = _folders.where((f) => f.id == folderId).firstOrNull;
     // The notes moved to Notes (trashed ones too) are queued with the folder delete.
     final movedNotes = folder != null && !folder.isSystem
         ? await _dbService.getNotes(folderId: folderId, isDeleted: null)
         : const <Note>[];
-    await _dbService.deleteFolder(folderId);
+    // Their vault copies name Notes before the folder goes; a failed write cancels the delete, as any other note action.
+    try {
+      await _vaultService.rewriteMovedNotes(_dbService, [
+        for (final note in movedNotes) note.copyWith(folderId: Folder.defaultNotesId),
+      ]);
+    } catch (error) {
+      _cancelAction(error);
+      return;
+    }
     if (folder != null && !folder.isSystem) {
       // Deleted here: the open view moves to All notes. A delete received from the cloud never reaches this code.
       if (_selectedFolderId == folderId) _selectedFolderId = Folder.allNotesId;
       for (final note in movedNotes) {
         await _syncService.notifyNoteChanged(note.copyWith(folderId: Folder.defaultNotesId));
       }
+      // Queued while the folder row still exists: the queued delete takes the row's cloud revision as its base.
       await _syncService.notifyFolderChanged(folder, isDelete: true);
     }
+    await _dbService.deleteFolder(folderId);
     await refreshFolders();
     await refreshNotes();
   }

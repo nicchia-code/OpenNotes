@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:open_notes/core/models/note_model.dart';
 import 'package:open_notes/core/services/database_service.dart';
+import 'package:open_notes/core/services/sync_log.dart';
 import 'package:open_notes/core/services/sync_service.dart';
 import 'package:open_notes/core/services/vault_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -33,7 +34,8 @@ void main() {
     });
     final vaultService = VaultService();
     await vaultService.init(customPath: tempDir.path);
-    final syncService = SyncService(dbService, vaultService);
+    final syncLog = SyncLog(File('${tempDir.path}/sync_log.txt'));
+    final syncService = SyncService(dbService, vaultService, log: syncLog);
     addTearDown(syncService.dispose);
 
     await syncService.initializeSupabase('http://127.0.0.1:${server.port}', 'test-anon-key');
@@ -62,6 +64,7 @@ void main() {
     expect((await dbService.getNoteById('with-drawing'))!.syncedAt, isNotNull);
     expect(cloud.storageUploads, hasLength(1));
     expect(await dbService.getCloudAttachmentPaths(), isEmpty, reason: 'the drawing is not on the cloud yet');
+    expect(await syncLog.read(), contains('[attachmentUpload] $attachment:'), reason: 'the refused upload is in the app log');
 
     // The next run uploads the drawing again, and records it as on the cloud.
     await syncService.syncNow();

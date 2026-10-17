@@ -50,4 +50,12 @@ void main() {
     expect(fromDb.updatedAt.isAtSameMomentAs(instant), isTrue);
     expect(fromDb.updatedAt.hour, instant.toLocal().hour);
   });
+
+  test('missing or unreadable note dates share one read instant', () {
+    final fromCloud = Note.fromSupabaseJson({'id': 'note-1', 'content': '', 'created_at': 'non valida'});
+    expect(fromCloud.createdAt, fromCloud.updatedAt);
+
+    final fromDb = Note.fromMap({'id': 'note-1', 'content': '', 'updated_at': 'non valida'});
+    expect(fromDb.createdAt, fromDb.updatedAt);
+  });
 }

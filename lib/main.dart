@@ -8,11 +8,14 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/database_service.dart';
 import 'core/services/security_service.dart';
 import 'core/services/sync_service.dart';
 import 'core/services/sync_triggers.dart';
+import 'core/services/sync_log.dart';
 import 'core/services/vault_service.dart';
 import 'core/state/notes_provider.dart';
 import 'ui/shell/adaptive_app_shell.dart';
@@ -57,7 +60,9 @@ void main() async {
     visibilityChanges: appVisibility.changes,
     initiallyVisible: appVisibility.isVisible,
   );
-  final syncService = SyncService(dbService, vaultService, triggers: syncTriggers);
+  final docsDir = await getApplicationDocumentsDirectory();
+  final syncLog = SyncLog(File(p.join(docsDir.path, 'sync_log.txt')));
+  final syncService = SyncService(dbService, vaultService, triggers: syncTriggers, log: syncLog);
 
   final authService = AuthService(syncService);
 
@@ -238,6 +243,7 @@ class _OpenNotesAppState extends State<OpenNotesApp> {
   late final NotesProvider _notes;
   late final AppLifecycleListener _lifecycle;
   bool _saveFailureShown = false;
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _saveFailureBar;
   late final StreamSubscription<void> _actionFailureSub;
 
   @override
@@ -278,15 +284,18 @@ class _OpenNotesAppState extends State<OpenNotesApp> {
     super.dispose();
   }
 
-  /// Warns once per failure: the note text stays unsaved until a write succeeds.
+  /// Warns once per failure: the note text stays unsaved until a write succeeds. The warning goes away with the first
+  /// successful write; other messages are left alone.
   void _onNotesChanged() {
     if (!_notes.contentSaveFailed) {
       _saveFailureShown = false;
+      _saveFailureBar?.close();
+      _saveFailureBar = null;
       return;
     }
     if (_saveFailureShown) return;
     _saveFailureShown = true;
-    _messengerKey.currentState?.showSnackBar(
+    _saveFailureBar = _messengerKey.currentState?.showSnackBar(
       const SnackBar(content: Text('Nota non salvata: il salvataggio verrà ritentato.')),
     );
   }

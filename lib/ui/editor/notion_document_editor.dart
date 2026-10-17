@@ -152,6 +152,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   Timer? _saveDebounceTimer;
   // Set while shown, so an export can take the text still waiting in the debounce.
   NotesProvider? _provider;
+  // Hands over the text still waiting when a mobile editor is left by a way back; set by keepWaitingTextOnExit.
+  void Function()? _exitDelivery;
 
   bool get isPreviewMode => _isPreviewMode;
 
@@ -339,7 +341,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
   @override
   void dispose() {
-    _saveDebounceTimer?.cancel();
+    if (_exitDelivery == null) _saveDebounceTimer?.cancel();
     _provider?.detachEditorDelivery(_deliverWaitingText);
     _disposeControllers();
     _scrollController.dispose();
@@ -351,6 +353,16 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     if (_saveDebounceTimer?.isActive ?? false) {
       _serializeAndSave(immediate: true);
     }
+  }
+
+  /// Called when the mobile editor screen is left by a way back (not by a removal): the text still waiting in the
+  /// debounce window is handed over when that wait ends, although this editor is gone by then.
+  void keepWaitingTextOnExit() {
+    final provider = _provider;
+    if (provider == null || !(_saveDebounceTimer?.isActive ?? false)) return;
+    final noteId = widget.note.id;
+    final jsonString = _serializeBlocks();
+    _exitDelivery = () => provider.updateNoteContent(noteId, jsonString);
   }
 
   void _disposeControllers() {
@@ -474,14 +486,21 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 line = line.replaceFirst('# ', '');
               }
 
+              final lineIndent = line.substring(
+                0,
+                line.length - line.trimLeft().length,
+              );
               String linePrefix = '';
               if (detectedStyle == BlockType.bullet) {
-                linePrefix = '• ';
+                linePrefix =
+                    '$lineIndent${RichTextEditingController.getBulletForIndent(lineIndent.length)} ';
+                line = line.trimLeft();
                 detectedStyle = BlockType.paragraph;
               } else if (detectedStyle == BlockType.numbered) {
                 // A number already in the text stays there, and so does the line type.
                 if (!RegExp(r'^\s*\d+\.').hasMatch(line)) {
-                  linePrefix = '1. ';
+                  linePrefix = '${lineIndent}1. ';
+                  line = line.trimLeft();
                   detectedStyle = BlockType.paragraph;
                 }
               } else if (detectedStyle == BlockType.checklist) {
@@ -490,13 +509,15 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
               } else if (detectedStyle == BlockType.quote) {
                 // A quote sign already in the text stays there, indent included.
                 if (!RegExp(r'^\s*> ').hasMatch(line)) {
-                  linePrefix = '> ';
+                  linePrefix = '$lineIndent> ';
+                  line = line.trimLeft();
                   detectedStyle = BlockType.paragraph;
                 }
               } else if (detectedStyle == BlockType.code) {
                 // A fence already in the text stays there, indent included.
                 if (!RegExp(r'^\s*```').hasMatch(line)) {
-                  linePrefix = '``` ';
+                  linePrefix = '$lineIndent``` ';
+                  line = line.trimLeft();
                   detectedStyle = BlockType.paragraph;
                 }
               } else if (RegExp(
@@ -528,9 +549,8 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                   0,
                   rawLine.length - rawLine.trimLeft().length,
                 );
-                final bulletGlyph =
-                    RichTextEditingController.getBulletForIndent(indent.length);
-                linePrefix = '$indent$bulletGlyph ';
+                linePrefix =
+                    '$indent${RichTextEditingController.getBulletForIndent(indent.length)} ';
                 line = lineTrimmed.substring(2);
               }
 
@@ -782,14 +802,23 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       return;
     }
     _saveDebounceTimer?.cancel();
-    _saveDebounceTimer = Timer(const Duration(milliseconds: 300), () {
-      if (mounted) {
-        _doSerializeAndSave();
-      }
-    });
+    _saveDebounceTimer = Timer(const Duration(milliseconds: 300), _onWaitEnded);
+  }
+
+  void _onWaitEnded() {
+    if (mounted) {
+      _doSerializeAndSave();
+      return;
+    }
+    _exitDelivery?.call();
   }
 
   void _doSerializeAndSave() {
+    context.read<NotesProvider>().updateNoteContent(widget.note.id, _serializeBlocks());
+  }
+
+  // Copies what the controllers show into the blocks and returns the stored JSON of the document.
+  String _serializeBlocks() {
     for (final b in _blocks) {
       if (b.controller != null) {
         b.text = b.controller!.text;
@@ -800,7 +829,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final blockList = _blocks.map((b) => b.toJson()).toList();
     final jsonString = jsonEncode(blockList);
     _lastSerializedContent = jsonString;
-    context.read<NotesProvider>().updateNoteContent(widget.note.id, jsonString);
+    return jsonString;
   }
 
   // --- External Toolbar Actions ---
@@ -1053,6 +1082,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final block = _currentActiveBlock;
     if (block?.controller != null) {
       block!.controller!.handleTabKey(outdent: false);
+      _refreshSuggestionsAfterKeyEdit(block!, _blocks.indexOf(block));
       _serializeAndSave(immediate: false);
     }
   }
@@ -1062,6 +1092,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final block = _currentActiveBlock;
     if (block?.controller != null) {
       block!.controller!.handleTabKey(outdent: true);
+      _refreshSuggestionsAfterKeyEdit(block!, _blocks.indexOf(block));
       _serializeAndSave(immediate: false);
     }
   }
@@ -1805,7 +1836,19 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
   void _handleTextChanged(String val, NoteBlock block, int index) {
     block.text = val;
+    _refreshSuggestions(val, block, index);
+    _serializeAndSave(immediate: false);
+  }
 
+  /// Edits made by keys the controller handles itself (Enter, Tab, Backspace on lists and checklists)
+  /// do not reach [_handleTextChanged]: the menus follow the text they leave behind, as after typing.
+  void _refreshSuggestionsAfterKeyEdit(NoteBlock block, int index) {
+    final val = block.controller?.text ?? block.text;
+    block.text = val;
+    _refreshSuggestions(val, block, index);
+  }
+
+  void _refreshSuggestions(String val, NoteBlock block, int index) {
     final sel = block.controller?.selection;
     final pos = (sel != null && sel.isValid) ? sel.start : val.length;
     final textBeforeCaret = val.substring(0, math.min(pos, val.length));
@@ -1839,8 +1882,6 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
         });
       }
     }
-
-    _serializeAndSave(immediate: false);
   }
 
   void _selectAutocompleteTag(NoteBlock block, int index, String tagName) {
@@ -2249,6 +2290,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       final isShift = HardwareKeyboard.instance.isShiftPressed;
       if (block.controller != null &&
           block.controller!.handleTabKey(outdent: isShift)) {
+        _refreshSuggestionsAfterKeyEdit(block, index);
         _serializeAndSave(immediate: false);
         return KeyEventResult.handled;
       }
@@ -2258,6 +2300,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     if (event.logicalKey == LogicalKeyboardKey.enter &&
         !HardwareKeyboard.instance.isShiftPressed) {
       if (block.controller != null && block.controller!.handleEnterKey()) {
+        _refreshSuggestionsAfterKeyEdit(block, index);
         _serializeAndSave(immediate: false);
         return KeyEventResult.handled;
       }
@@ -2266,6 +2309,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     // BACKSPACE key
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
       if (block.controller != null && block.controller!.handleBackspaceKey()) {
+        _refreshSuggestionsAfterKeyEdit(block, index);
         _serializeAndSave(immediate: false);
         return KeyEventResult.handled;
       }

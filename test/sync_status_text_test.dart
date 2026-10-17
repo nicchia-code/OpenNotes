@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:open_notes/core/services/sync_service.dart';
 import 'package:open_notes/core/services/sync_triggers.dart';
 import 'package:open_notes/ui/sync/sync_status_label.dart';
@@ -61,6 +62,30 @@ void main() {
     test('classifies a status error from the cloud', () {
       expect(syncErrorCategoryOf(const StorageException('down', statusCode: '503')), SyncErrorCategory.cloudUnavailable);
       expect(syncErrorCategoryOf(const StorageException('denied', statusCode: '401')), SyncErrorCategory.sessionExpired);
+    });
+
+    test('classifies a database answer by its HTTP status', () {
+      SyncErrorCategory categoryOf(String code) =>
+          syncErrorCategoryOf(PostgrestException(message: 'answer', code: code));
+      expect(categoryOf('500'), SyncErrorCategory.cloudUnavailable);
+      expect(categoryOf('503'), SyncErrorCategory.cloudUnavailable);
+      expect(categoryOf('408'), SyncErrorCategory.cloudUnavailable);
+      expect(categoryOf('429'), SyncErrorCategory.cloudUnavailable);
+      expect(categoryOf('401'), SyncErrorCategory.sessionExpired);
+      expect(categoryOf('400'), SyncErrorCategory.unexpected);
+      expect(categoryOf('404'), SyncErrorCategory.unexpected);
+    });
+
+    test('leaves a database error code that is not an HTTP status unexpected', () {
+      expect(syncErrorCategoryOf(const PostgrestException(message: 'denied', code: '42501')), SyncErrorCategory.unexpected);
+      expect(syncErrorCategoryOf(const PostgrestException(message: 'stale', code: 'PGRST301')), SyncErrorCategory.unexpected);
+    });
+
+    test('a connection cut during an answer is a network failure', () {
+      expect(
+        syncErrorCategoryOf(http.ClientException('Connection closed while receiving data')),
+        SyncErrorCategory.network,
+      );
     });
 
     test('classifies an unknown error as unexpected', () {

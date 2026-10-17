@@ -435,6 +435,15 @@ class DatabaseService {
     );
   }
 
+  /// Removes the queued deletes of notes this device had synced and then removed for good: their rows are gone. Only a
+  /// note the cloud has seen has a base revision, which tells them apart from notes never synced (their deletes stay).
+  Future<void> removeQueuedDeletesOfPurgedSyncedNotes() async {
+    await db.rawDelete(
+      "DELETE FROM sync_queue WHERE entity_type = 'note' AND action = 'delete' "
+      'AND base_revision IS NOT NULL AND entity_id NOT IN (SELECT id FROM notes)',
+    );
+  }
+
   /// When the queued delete of this entity was made; null when no delete waits to be sent.
   Future<DateTime?> pendingDeleteQueuedAt(String entityType, String entityId) async {
     final rows = await db.query(

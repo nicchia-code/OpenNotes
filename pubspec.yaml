@@ -53,6 +53,7 @@ dependencies:
   shared_preferences: ^2.5.5
   window_manager: ^0.5.2
   connectivity_plus: ^7.3.1
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:
@@ -64,6 +65,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -113,3 +116,39 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# App icons, generated with `dart run flutter_launcher_icons`. The source
+# image is not a Flutter asset: it is not listed under `flutter: assets:`.
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  # Classic and adaptive (foreground and background) icons, Android.
+  image_path: "assets/icon/OpenNotes-full-bleed.png"
+  adaptive_icon_background: "assets/icon/OpenNotes-full-bleed.png"
+  adaptive_icon_foreground: "assets/icon/OpenNotes-full-bleed.png"
+  macos:
+    generate: true
+    image_path: "assets/icon/OpenNotes-square.png"
+  windows:
+    generate: true
+    image_path: "assets/icon/OpenNotes-square.png"
+  web:
+    generate: true
+    image_path: "assets/icon/OpenNotes-square.png"
+
+# Splash screen for iOS and Android, generated with
+# `dart run flutter_native_splash:create`.
+flutter_native_splash:
+  color: "#FFFFFF"
+  color_dark: "#000000"
+  image: assets/icon/OpenNotes-square.png
+  image_dark: assets/icon/OpenNotes-square.png
+  android: true
+  ios: true
+  web: false
+  android_12:
+    color: "#FFFFFF"
+    color_dark: "#000000"
+    image: assets/icon/OpenNotes-square.png
+    image_dark: assets/icon/OpenNotes-square.png

@@ -928,7 +928,7 @@ Paragrafo di testo normale
 
 
   testWidgets(
-    'NotionDocumentEditor keeps indent of dash list items loaded from block format',
+    'NotionDocumentEditor turns indented dash items loaded from block format into bullets',
     (tester) async {
       final note = Note(
         id: 'block-indented-dash-item',
@@ -971,6 +971,55 @@ Paragrafo di testo normale
           .singleWhere((c) => c.text.contains('Figlio'));
       expect(ctrl.text, 'Titolo\n  ◦ Figlio');
       expect(ctrl.getLineStyle(1), BlockType.paragraph);
+    },
+  );
+
+  testWidgets(
+    'NotionDocumentEditor gives loaded bullet, quote and numbered lines their indent level and keeps the indent before the sign',
+    (tester) async {
+      final note = Note(
+        id: 'block-indented-levels',
+        title: 'Blocchi',
+        content:
+            '[{"id":"b1","type":"paragraph","text":"Titolo\\n  Uno\\n    Due\\n      Tre\\n  Citata\\n    Numerata","isChecked":false,"spans":[],"lineStyles":{"1":"bullet","2":"bullet","3":"bullet","4":"quote","5":"numbered"}}]',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(body: NotionDocumentEditor(note: note)),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final ctrl = tester
+          .widgetList<TextField>(find.byType(TextField))
+          .map((f) => f.controller)
+          .whereType<RichTextEditingController>()
+          .singleWhere((c) => c.text.contains('Uno'));
+      expect(
+        ctrl.text,
+        'Titolo\n  ◦ Uno\n    ▪ Due\n      • Tre\n  > Citata\n    1. Numerata',
+      );
     },
   );
 
@@ -1683,6 +1732,65 @@ Testo dopo
       ]) {
         expect(find.text(label), findsOneWidget);
       }
+    },
+  );
+
+  testWidgets(
+    'NotionDocumentEditor Block menu closes when Enter on a list drops the leading slash',
+    (tester) async {
+      final note = Note(
+        id: 'test-block-menu-enter',
+        title: 'Nota Menu Invio',
+        content: '',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      final editorKey = GlobalKey<NotionDocumentEditorState>();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(key: editorKey, note: note),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // A bullet item without a slash: the Block menu opened by the button stays open only until a text edit.
+      final firstSection = find.byType(TextField).first;
+      await tester.tap(firstSection);
+      await tester.pumpAndSettle();
+      await tester.enterText(firstSection, '- Elemento');
+      await tester.pumpAndSettle();
+
+      editorKey.currentState?.openBlockMenu();
+      await tester.pumpAndSettle();
+      expect(find.text('Tabella'), findsOneWidget);
+
+      // Enter on the item is handled by the list logic, not by typed text: the menu must still close.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Tabella'), findsNothing);
     },
   );
 

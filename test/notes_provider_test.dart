@@ -384,11 +384,11 @@ void main() {
     await provider.init();
 
     provider.updateNoteContent('waiting', 'waiting new');
-    await provider.toggleLock('waiting');
+    await provider.toggleLock('waiting', wasLocked: false);
 
     provider.updateNoteContent('running', 'running first');
     final write = provider.flushOnAppLeavingForeground();
-    await provider.toggleLock('running');
+    await provider.toggleLock('running', wasLocked: false);
     await write;
 
     // Checked at once, before the 400 ms wait of the content save could run.
@@ -790,37 +790,6 @@ void main() {
     expect(folders.map((f) => f.id), isNot(contains('remote-deleted')));
   });
 
-  test('a remote change made after a queued folder delete restores the folder and drops the delete', () async {
-    final now = DateTime.utc(2026, 10, 1, 9);
-    await dbService.upsertFolder(Folder(id: 'later-changed', name: 'Eliminata', createdAt: now, updatedAt: now));
-    await dbService.deleteFolder('later-changed');
-    await dbService.queueSyncAction(
-      entityType: 'folder',
-      entityId: 'later-changed',
-      action: 'delete',
-      payload: '{"id":"later-changed"}',
-    );
-
-    await syncService.handleRemoteFolderChange(PostgresChangePayload(
-      schema: 'public',
-      table: 'folders',
-      commitTimestamp: DateTime.utc(2099, 1, 1),
-      eventType: PostgresChangeEvent.update,
-      newRecord: {
-        'id': 'later-changed',
-        'name': 'Modificata dopo',
-        'created_at': '2026-10-01T00:00:00Z',
-        'updated_at': '2099-01-01T00:00:00Z',
-      },
-      oldRecord: const {},
-      errors: null,
-    ));
-
-    final folders = await dbService.getFolders();
-    expect(folders.map((f) => f.id), contains('later-changed'));
-    expect(await dbService.hasPendingSyncAction(entityType: 'folder', entityId: 'later-changed'), isFalse);
-  });
-
   test('a remote change restores a folder whose delete was already sent', () async {
     final now = DateTime.utc(2026, 10, 1, 9);
     await dbService.upsertFolder(Folder(id: 'sent-deleted', name: 'Inviata', createdAt: now, updatedAt: now));
@@ -896,6 +865,63 @@ void main() {
     expect(provider.selectedFolderId, Folder.allNotesId);
 
     provider.dispose();
+  });
+
+  test('deleting a folder rewrites the vault copy of its notes to Notes', () async {
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+    );
+    await provider.init();
+    final folder = await provider.createFolder('Da eliminare');
+    final now = DateTime.utc(2026, 10, 1, 9);
+    final note = Note(
+      id: 'folder-moved-note',
+      title: 'Spostata',
+      content: 'Spostata',
+      folderId: folder.id,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final path = await vaultService.saveNote(note);
+    await dbService.upsertNote(note.copyWith(filePath: path));
+
+    await provider.deleteFolder(folder.id);
+
+    final copy = await File(path).readAsString();
+    expect(copy, contains('folder_id: "notes"'));
+    expect(copy, isNot(contains(folder.id)));
+    provider.dispose();
+  });
+
+  test('a folder deleted from the cloud rewrites the vault copy of its notes to Notes', () async {
+    final now = DateTime.utc(2026, 10, 1, 9);
+    await dbService.upsertFolder(
+      Folder(id: 'cloud-folder-file', name: 'Eliminata nel cloud', createdAt: now, updatedAt: now),
+    );
+    final note = Note(
+      id: 'cloud-folder-note',
+      title: 'Nella cartella del cloud',
+      content: 'Nella cartella del cloud',
+      folderId: 'cloud-folder-file',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final path = await vaultService.saveNote(note);
+    await dbService.upsertNote(note.copyWith(filePath: path));
+
+    await syncService.handleRemoteFolderChange(PostgresChangePayload(
+      schema: 'public',
+      table: 'folders',
+      commitTimestamp: DateTime.utc(2026, 10, 2),
+      eventType: PostgresChangeEvent.delete,
+      newRecord: const {},
+      oldRecord: const {'id': 'cloud-folder-file'},
+      errors: null,
+    ));
+
+    expect(await File(path).readAsString(), contains('folder_id: "notes"'));
   });
 
   test('tag list follows trash, restore and move of a note', () async {

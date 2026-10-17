@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:open_notes/ui/notes_list/note_card.dart';
 import 'package:open_notes/core/models/note_model.dart';
+import 'package:open_notes/ui/sync/sync_state_glyph.dart';
 
 void main() {
   testWidgets('NoteCard renders title and indicators properly', (WidgetTester tester) async {
@@ -55,9 +56,9 @@ void main() {
         );
 
     await tester.pumpWidget(card(isSetAside: true));
-    expect(find.byIcon(Icons.cloud_off), findsOneWidget);
+    expect(find.byType(SyncStateGlyph), findsOneWidget);
 
     await tester.pumpWidget(card(isSetAside: false));
-    expect(find.byIcon(Icons.cloud_off), findsNothing);
+    expect(find.byType(SyncStateGlyph), findsNothing);
   });
 }

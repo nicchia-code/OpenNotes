@@ -696,6 +696,8 @@ class Note {
       }
     }
 
+    // A missing or unreadable date takes the instant of the read: created and updated share it.
+    final readAt = DateTime.now();
     return Note(
       id: (map['id'] as String?) ?? '',
       title: map['title'] as String? ?? 'Nuova nota',
@@ -709,11 +711,11 @@ class Note {
           ? DateTime.tryParse(map['deleted_at'] as String)
           : null,
       createdAt: map['created_at'] != null
-          ? DateTime.tryParse(map['created_at'] as String) ?? DateTime.now()
-          : DateTime.now(),
+          ? DateTime.tryParse(map['created_at'] as String) ?? readAt
+          : readAt,
       updatedAt: map['updated_at'] != null
-          ? (DateTime.tryParse(map['updated_at'] as String) ?? DateTime.now()).toLocal()
-          : DateTime.now(),
+          ? (DateTime.tryParse(map['updated_at'] as String) ?? readAt).toLocal()
+          : readAt,
       syncedAt: map['synced_at'] != null
           ? DateTime.tryParse(map['synced_at'] as String)
           : null,
@@ -749,6 +751,8 @@ class Note {
     if (json['tags'] is List) {
       parsedTags = (json['tags'] as List).map((e) => e.toString()).toList();
     }
+    // A missing or unreadable date takes the instant of the read: created and updated share it.
+    final readAt = DateTime.now();
     return Note(
       id: json['id'] as String,
       title: json['title'] as String? ?? 'Nuova nota',
@@ -762,11 +766,11 @@ class Note {
           ? DateTime.tryParse(json['deleted_at'] as String)
           : null,
       createdAt: json['created_at'] != null
-          ? DateTime.tryParse(json['created_at'] as String) ?? DateTime.now()
-          : DateTime.now(),
+          ? DateTime.tryParse(json['created_at'] as String) ?? readAt
+          : readAt,
       updatedAt: json['updated_at'] != null
-          ? (DateTime.tryParse(json['updated_at'] as String) ?? DateTime.now()).toLocal()
-          : DateTime.now(),
+          ? (DateTime.tryParse(json['updated_at'] as String) ?? readAt).toLocal()
+          : readAt,
       syncedAt: DateTime.now(),
       cachedSnippet: Note.extractSnippet(
         json['content'] as String? ?? '',

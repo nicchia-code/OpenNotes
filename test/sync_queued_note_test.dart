@@ -366,5 +366,59 @@ void main() {
     final removed = await dbService.getNoteById(trashed.id);
     expect(removed, isNull, reason: 'a trashed note deleted in the cloud is removed from the device');
     expect(await dbService.getPendingSyncActions(), isEmpty);
+
+    // Queued save of a note that the cloud deleted while the save was being sent. The save is older than the delete, so
+    // the cloud wins over it; a newer save of the note, queued after the delete, must not be dropped with it: it stays
+    // queued and reaches the cloud in the same run.
+    final deleteAt = DateTime.now().subtract(const Duration(minutes: 5));
+    final olderSave = Note(
+      id: 'saved-after-cloud-delete-1',
+      title: 'Salvata dopo l\'eliminazione',
+      content: 'Versione vecchia',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now().subtract(const Duration(minutes: 10)),
+    );
+    cloudRows[olderSave.id] = olderSave.toSupabaseJson(userId);
+    await dbService.upsertNote(olderSave.copyWith(syncedAt: DateTime.now()));
+    await dbService.queueSyncAction(
+      entityType: 'note',
+      entityId: olderSave.id,
+      action: 'upsert',
+      payload: jsonEncode(olderSave.toSupabaseJson(userId)),
+    );
+    onNoteUpsert = () async {
+      cloudRows[olderSave.id] = {
+        'id': olderSave.id,
+        'user_id': userId,
+        'title': '',
+        'content': '',
+        'tags': <String>[],
+        'updated_at': deleteAt.toIso8601String(),
+        'purged_at': deleteAt.toIso8601String(),
+        'revision': ++revisionCounter,
+      };
+      final newerSave = olderSave.copyWith(
+        syncedAt: DateTime.now(),
+        content: 'Versione nuova',
+        updatedAt: DateTime.now(),
+      );
+      await dbService.upsertNote(newerSave);
+      await dbService.queueSyncAction(
+        entityType: 'note',
+        entityId: newerSave.id,
+        action: 'upsert',
+        payload: jsonEncode(newerSave.toSupabaseJson(userId)),
+      );
+    };
+
+    await syncService.syncNow();
+
+    expect(cloudRows[olderSave.id]!['purged_at'], isNull,
+        reason: 'the newer save brings the note back to the cloud');
+    expect(upserts.where((u) => u['id'] == olderSave.id).map((u) => u['content']), ['Versione nuova'],
+        reason: 'the save made after the cloud delete is sent in the same run');
+    expect((await dbService.getNoteById(olderSave.id))!.content, 'Versione nuova',
+        reason: 'the device keeps the newer save');
+    expect(await dbService.getPendingSyncActions(), isEmpty);
   });
 }

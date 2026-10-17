@@ -132,14 +132,48 @@ void main() {
       action: 'upsert',
       payload: jsonEncode(offlineFolder.toSupabaseJson(userId)),
     );
+    // A note the device synced and then deleted for good before the switch: only its queued delete is left.
+    final purgedSynced = Note(
+      id: 'purged-synced-1',
+      title: 'Nota eliminata',
+      content: '',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      cloudRevision: 7,
+    ).copyWith(syncedAt: DateTime.now());
+    await dbService.upsertNote(purgedSynced);
+    await dbService.queueSyncAction(
+      entityType: 'note',
+      entityId: purgedSynced.id,
+      action: 'delete',
+      payload: jsonEncode({'id': purgedSynced.id}),
+    );
+    await dbService.deleteNoteRow(purgedSynced.id);
+    // A note never synced and deleted for good before the switch: its delete is still sent.
+    final purgedUnsynced = Note(
+      id: 'purged-unsynced-1',
+      title: 'Nota mai sincronizzata',
+      content: '',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await dbService.upsertNote(purgedUnsynced);
+    await dbService.queueSyncAction(
+      entityType: 'note',
+      entityId: purgedUnsynced.id,
+      action: 'delete',
+      payload: jsonEncode({'id': purgedUnsynced.id}),
+    );
+    await dbService.deleteNoteRow(purgedUnsynced.id);
 
     await waitUntil(() => !syncService.isSyncing);
     await syncService.syncNow();
 
     expect(await dbService.getNoteById('old-synced-1'), isNull);
-    expect(upserts.map((u) => u['id']), ['new-local-1']);
+    expect(upserts.map((u) => u['id']), unorderedEquals(['new-local-1', 'purged-unsynced-1']));
     final pending = await dbService.getPendingSyncActions();
     expect(pending.where((a) => a['entity_id'] == 'old-synced-1'), isEmpty);
+    expect(pending.where((a) => a['entity_id'] == 'purged-synced-1'), isEmpty);
     expect((await dbService.getFolders()).map((f) => f.id), contains('offline-folder-1'));
     expect(folderUpserts.map((f) => f['id']), ['offline-folder-1']);
     expect(pending.where((a) => a['entity_type'] == 'folder'), isEmpty);

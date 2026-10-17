@@ -41,7 +41,7 @@ class SidebarView extends StatelessWidget {
       ),
       child: Column(
         children: [
-          // Header: OpenNotes branding and settings
+          // Header: OpenNotes branding and the sync status
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 14, 12, 10),
             child: Row(
@@ -58,30 +58,35 @@ class SidebarView extends StatelessWidget {
                   ),
                 ),
                 SyncStatusIndicator(color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary),
-                const SizedBox(width: 6),
-                Tooltip(
-                  message: sync.isAuthenticated
-                      ? 'Impostazioni (${sync.currentUser?.email})'
-                      : 'Impostazioni',
-                  child: CupertinoButton(
-                    padding: EdgeInsets.zero,
-                    minSize: 24,
-                    child: Icon(
-                      CupertinoIcons.gear,
-                      size: 16,
-                      color: isDark ? AppleTheme.darkTextSecondary : AppleTheme.lightTextSecondary,
-                    ),
-                    onPressed: () {
-                      showDialog(
-                        context: context,
-                        builder: (_) => const SupabaseSettingsDialog(),
-                      );
-                    },
-                  ),
-                ),
               ],
             ),
           ),
+          // Without a connected account the gear is not enough to reach sign-in: this command opens the same window.
+          if (!sync.isAuthenticated)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 12, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  minSize: 24,
+                  child: Text(
+                    'Accedi',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppleTheme.adaptiveAccent(context),
+                    ),
+                  ),
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (_) => const SupabaseSettingsDialog(),
+                    );
+                  },
+                ),
+              ),
+            ),
 
           // Main Folder Tree
           Expanded(

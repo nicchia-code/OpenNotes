@@ -7,12 +7,13 @@ import 'package:open_notes/core/services/database_service.dart';
 import 'package:open_notes/core/services/sync_service.dart';
 import 'package:open_notes/core/services/vault_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 // Own file: the Supabase client is a process-wide singleton.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a sync run downloads the attachments missing from the vault once; applying a cloud copy downloads none',
+  test('a realtime note change downloads its missing attachments at once; a pulled copy downloads none and a sync run downloads each once',
       () async {
     const userId = '44444444-4444-4444-8444-444444444444';
     const noteId = 'attachment-note';
@@ -115,20 +116,33 @@ void main() {
       updatedAt: now,
     ).copyWith(syncedAt: now, cloudRevision: 3));
 
-    // A newer cloud copy is applied to the device: the copy alone downloads no attachment.
-    final newer = Note.fromSupabaseJson(cloudRow(4, DateTime.utc(2026, 10, 1, 10), 'Con allegato nuovo'));
-    expect(await syncService.applyRemoteNote(newer), isTrue);
-    expect(storageGets, isEmpty, reason: 'attachments are downloaded by the sync run, not by applying a note');
-
-    // The sync run downloads the missing attachment and records it as on the cloud.
-    cloudNotes
-      ..clear()
-      ..add(cloudRow(4, DateTime.utc(2026, 10, 1, 10), 'Con allegato nuovo'));
-    await syncService.syncNow();
+    // A newer cloud copy arrives on the realtime channel: it replaces the local copy and its missing attachment is
+    // downloaded at once, without waiting for a sync run.
+    await syncService.handleRemoteNoteChange(PostgresChangePayload(
+      schema: 'public',
+      table: 'notes',
+      commitTimestamp: DateTime.utc(2026, 10, 1, 10),
+      eventType: PostgresChangeEvent.update,
+      newRecord: cloudRow(4, DateTime.utc(2026, 10, 1, 10), 'Con allegato nuovo'),
+      oldRecord: const {},
+      errors: null,
+    ));
     expect(storageGets, hasLength(1));
     expect(storageGets.single, endsWith('/$userId/disegno.png'));
     expect(vaultService.resolveAttachment('attachments/disegno.png').existsSync(), isTrue);
     expect(await dbService.getCloudAttachmentPaths(), contains('attachments/disegno.png'));
+
+    // A copy applied without the realtime channel (the pull) downloads nothing by itself: the sync run does it.
+    final pulled = Note.fromSupabaseJson(cloudRow(5, DateTime.utc(2026, 10, 1, 11), 'Con allegato tirato'));
+    expect(await syncService.applyRemoteNote(pulled), isTrue);
+    expect(storageGets, hasLength(1), reason: 'attachments are downloaded by the sync run, not by applying a note');
+
+    // The sync run downloads nothing more: the attachment is in the vault already.
+    cloudNotes
+      ..clear()
+      ..add(cloudRow(5, DateTime.utc(2026, 10, 1, 11), 'Con allegato tirato'));
+    await syncService.syncNow();
+    expect(storageGets, hasLength(1));
 
     // The file is in the vault now: the next run does not download it again.
     await syncService.syncNow();
