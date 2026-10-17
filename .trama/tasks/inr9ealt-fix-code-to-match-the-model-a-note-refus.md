@@ -1,0 +1,31 @@
+---
+column: done
+technical: false
+refs:
+  - sync-run/Sending unsynced notes
+  - requirements/rules#sync-run
+drift: xhfe0bj1
+proposal: null
+agent: false
+created: 2026-10-17T18:38:45.632Z
+finished: 2026-10-17T19:13:54.283Z
+---
+# Fix code to match the Model: A note refused by the cloud during the unsynced sweep fails the whole sync run
+
+## What happens
+
+Le note mai sincronizzate senza una modifica in coda, come le note di benvenuto o quelle presenti già prima dell'aggiornamento, vengono inviate direttamente. Se il cloud rifiuta una di queste note, il giro si interrompe con un errore imprevisto e non legge né scarica nulla dal cloud. Il giro successivo riparte dallo stesso punto e fallisce di nuovo: finché il cloud rifiuta la nota, nessuna nota del cloud arriva sul dispositivo.
+
+## What should happen
+
+Secondo i Requirements un cambiamento rifiutato dal cloud (una risposta 4xx diversa da 401, 408 e 429, oppure un errore del database per vincolo, dato non valido o permesso) **non fa fallire il giro**: il giro prosegue con le altre parti. Anche il Model dice che il giro fallisce per rete, tempo scaduto, sessione o errore imprevisto, non per un cambiamento rifiutato dal cloud.
+
+## Chosen option
+
+**Accodare le note mai sincronizzate prima dell'invio**
+
+Prima di inviare una nota mai sincronizzata senza modifica in coda, la si mette in coda. Il suo eventuale rifiuto segue la stessa strada di ogni modifica in coda, con i tre rifiuti e la messa da parte. La decisione sulle note di benvenuto resta quella dell'invio, quindi non cambia il fatto che non entrano in coda al salvataggio. Costo: una scrittura in più per ogni nota da inviare e più casi da coprire nella coda.
+
+## Where in the code
+
+lib/core/services/sync_service.dart: _sendUnsyncedNote invia senza catturare i rifiuti; _pushQueue conta già i rifiuti delle modifiche in coda e il giro prosegue; _runOnce fa fallire il giro per ogni errore non riconosciuto come rete, tempo o sessione.

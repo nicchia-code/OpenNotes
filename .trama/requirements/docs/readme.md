@@ -9,7 +9,7 @@ description: Usare quando si scrive o si modifica il README, la licenza, gli scr
 - `README.md` alla radice del repository, scritto in inglese, sostituisce del tutto il modello generato da Flutter.
 - Stile minimale: frasi brevi, una riga per ogni funzione, niente emoji e niente testo di riempimento.
 - Si rivolge prima a chi vuole usare l'app e poi a chi vuole compilarla: le sezioni compaiono in quest'ordine.
-  1. Titolo `OpenNotes`, sotto la frase «A local-first notes app inspired by Apple Notes, for desktop and mobile.» e due badge: stato del workflow `.github/workflows/desktop-build.yml` e licenza MIT.
+  1. In cima l'icona `assets/icon/OpenNotes.png`, larga 128 px e centrata (HTML `<p align="center">`); poi il titolo `OpenNotes`, sotto la frase «A local-first notes app inspired by Apple Notes, for desktop and mobile.» e due badge: stato del workflow `.github/workflows/desktop-build.yml` e licenza MIT.
   2. Screenshots.
   3. Features.
   4. Download.

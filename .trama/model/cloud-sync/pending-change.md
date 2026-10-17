@@ -7,7 +7,7 @@ Un cambiamento locale di una nota o di una cartella in attesa di essere inviato 
 ### Pending (initial)
 Il cambiamento attende sul dispositivo e ricorda il momento in cui è entrato in coda e la revisione del cloud su cui si basa.
 - `sync-run.CHANGE_DISCARDED` → Discarded: solo per questo cambiamento; viene tolto dalla coda senza essere inviato, perché vince la versione del cloud.
-- `sync-run.PREVIOUS_ACCOUNT_NOTE_REMOVED` → Discarded: solo se il cambiamento riguarda la nota rimossa per il cambio di account; viene tolto dalla coda senza essere inviato e la modifica va persa.
+- `sync-run.PREVIOUS_ACCOUNT_NOTE_REMOVED` → Discarded: solo se il cambiamento riguarda una nota già sincronizzata dal precedente account che è rimossa dal dispositivo per il cambio di account oppure era già stata eliminata definitivamente prima del cambio; viene tolto dalla coda senza essere inviato e la modifica va persa.
 - `note.PERMANENTLY_DELETED` → Discarded: solo se il cambiamento è un salvataggio della nota eliminata definitivamente dall'utente (singolarmente o svuotando il cestino); la cancellazione nel cloud prende il suo posto nella coda.
 - `realtime-channel.CLOUD_NOTE_REMOVED` → Discarded: solo se il cambiamento riguarda la nota eliminata nel cloud e rimossa dal dispositivo dal canale in tempo reale, perché l'eliminazione è più recente della modifica; viene tolto dalla coda subito, senza essere inviato e senza attendere la sincronizzazione.
 - `note.SAVED` → Queued: solo se il cambiamento riguarda la stessa nota e il salvataggio è fatto sul dispositivo; prende la nuova versione della nota e torna in coda con il conteggio dei rifiuti azzerato.

@@ -29,12 +29,12 @@ Al posto del contenuto c'è il segnaposto «Questa nota è protetta» con il pul
 - `realtime-channel.CLOUD_NOTE_APPLIED` → Protected: alle stesse condizioni della sincronizzazione; ricarica il documento nascosto, che resta non mostrato.
 
 ### Open
-Mostra la data dell'ultima modifica, i tag della nota e il documento modificabile. Le sezioni di testo sono fatte di righe (vedi la macchina delle righe) con la formattazione dei caratteri; tabelle e immagini sono parti a sé. La parte attiva è quella che ha il focus, altrimenti l'ultima che lo ha avuto. La nota resta modificabile anche quando è nel cestino.
+Mostra la data dell'ultima modifica, i tag della nota e il documento modificabile. Le sezioni di testo sono fatte di righe (vedi la macchina delle righe) con la formattazione dei caratteri; tabelle e immagini sono parti a sé. La parte attiva è quella che ha il focus, altrimenti l'ultima che lo ha avuto. La nota resta modificabile anche quando è nel cestino. Se la nota esce dall'elenco caricato, per spostamento in un'altra cartella, ripristino dal cestino o sparizione dai dati, l'editor mobile resta aperto e mostra l'ultima versione ricevuta, ma le modifiche fatte da quel momento non vengono salvate.
 - `note-access.RELOCKED` → Protected: se riguarda la nota aperta.
 - `note-selection.SELECTED_NOTE_CHANGED` → Open: se la nuova nota non è protetta oppure è già sbloccata. Scarta senza salvarla l'eventuale modifica in attesa, chiude i menu e carica il nuovo documento.
 - `note-selection.SELECTED_NOTE_CHANGED` → Protected: se la nuova nota è protetta e non sbloccata. Scarta l'eventuale modifica in attesa.
 - `note-selection.SELECTED_NOTE_CHANGED` → Closed: se non è più selezionata nessuna nota. Scarta l'eventuale modifica in attesa.
-- `user.NAVIGATE_BACK` → Closed: su mobile, se l'editor è la schermata in primo piano. Scarta l'eventuale modifica in attesa. L'editor mobile si chiude allo stesso modo quando la nota aperta viene spostata nel cestino o eliminata dal suo menu; nello spostamento nel cestino la modifica in attesa viene prima consegnata, come per gli altri comandi sulla nota.
+- `user.NAVIGATE_BACK` → Closed: su mobile, se l'editor è la schermata in primo piano. L'eventuale modifica in attesa non viene scartata: viene consegnata allo scadere dell'attesa, mentre la schermata esce, e poi salvata. L'editor mobile si chiude anche quando la nota aperta viene spostata nel cestino o eliminata dal suo menu, scartando l'eventuale modifica in attesa; nello spostamento nel cestino la modifica in attesa viene prima consegnata, come per gli altri comandi sulla nota.
 - `user.EDIT_NOTE_TEXT` → Save pending: aggiorna il testo, sposta formattazione e stili di riga e applica le scorciatoie Markdown.
 - `user.PRESS_ENTER_IN_TEXT` → Save pending: su una voce di elenco, di checklist o numerata, o su una riga di titolo o intestazione applica le regole di continuazione. Altrove va semplicemente a capo.
 - `user.PRESS_TAB_IN_TEXT` → Save pending: aumenta il rientro delle righe selezionate, o lo riduce se si tiene premuto Maiuscole.
@@ -76,8 +76,9 @@ Ci sono modifiche di testo non ancora consegnate. Ogni nuova modifica di testo f
 - `user.RESTORE_NOTE` → Idle: come per il fissaggio.
 - `user.UNDO_MOVE_NOTE_TO_TRASH` → Idle: come per il fissaggio.
 - `user.MOVE_NOTE_TO_FOLDER` → Idle: come per il fissaggio.
+- `user.DUPLICATE_NOTE` → Idle: prima che la copia venga creata, consegna subito per il salvataggio l'intero documento, senza aspettare la fine dell'attesa, così la copia nasce dal testo visto sullo schermo.
 
 ## Events
 
 ### CONTENT_CHANGED
-Emesso quando l'editor trasforma l'intero documento della nota aperta in contenuto salvabile e lo consegna per il salvataggio. Succede subito dopo i comandi di formattazione, stile, checklist, tabelle, immagini, unione di sezioni, tag e menu rapido, dopo una pausa nelle modifiche di testo, oppure subito quando l'app lascia il primo piano o sta per partire un comando sulla nota (fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare, spostare in un'altra cartella) con modifiche di testo non ancora consegnate. Succede anche quando la nota è protetta e i comandi agiscono sul documento nascosto.
+Emesso quando l'editor trasforma l'intero documento della nota aperta in contenuto salvabile e lo consegna per il salvataggio. Succede subito dopo i comandi di formattazione, stile, checklist, tabelle, immagini, unione di sezioni, tag e menu rapido, dopo una pausa nelle modifiche di testo, oppure subito quando l'app lascia il primo piano o sta per partire un comando sulla nota (fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare, spostare in un'altra cartella, duplicare) con modifiche di testo non ancora consegnate. Succede anche quando la nota è protetta e i comandi agiscono sul documento nascosto.

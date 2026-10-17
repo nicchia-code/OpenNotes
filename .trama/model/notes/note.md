@@ -38,8 +38,8 @@ La nota compare dopo le note fissate.
 - `user.REMOVE_NOTE_LOCK` → Unpinned: solo se la nota è protetta e l'utente inserisce il PIN corretto; l'anteprima torna a mostrare il testo; aggiorna la data di modifica e salva la nota.
 - `user.MOVE_NOTE_TO_FOLDER` → Unpinned: verso una cartella diversa da quella attuale; aggiorna la data di modifica e salva la nota.
 - `note-content-save.NOTE_CONTENT_SAVED` → Unpinned: con il nuovo contenuto ricava di nuovo titolo, tag e anteprima, aggiorna la data di modifica e salva la nota.
-- `folder.DELETED` → Unpinned: solo se la nota era nella cartella eliminata; passa nella cartella Note senza aggiornare la data di modifica e senza riscrivere il file nell'archivio Markdown, e il cambiamento viene accodato per il cloud.
-- `supabase.REMOTE_FOLDER_DELETED` → Unpinned: solo se la nota era nella cartella eliminata altrove e la cartella viene davvero eliminata dal dispositivo; passa nella cartella Note senza aggiornare la data di modifica, senza riscrivere il file e senza accodare il cambiamento.
+- `folder.DELETED` → Unpinned: solo se la nota era nella cartella eliminata; passa nella cartella Note senza aggiornare la data di modifica, riscrivendo il file nell'archivio Markdown con la cartella nuova, e il cambiamento viene accodato per il cloud.
+- `supabase.REMOTE_FOLDER_DELETED` → Unpinned: solo se la nota era nella cartella eliminata altrove e la cartella viene davvero eliminata dal dispositivo; passa nella cartella Note senza aggiornare la data di modifica, riscrivendo il file nell'archivio Markdown con la cartella nuova, e senza accodare il cambiamento.
 - `sync-run.CLOUD_FOLDER_REMOVED` → Unpinned: come per l'eliminazione della cartella ricevuta in tempo reale.
 
 #### Pinned
@@ -49,7 +49,7 @@ La nota compare in cima all'elenco, prima delle note non fissate.
 - `user.REMOVE_NOTE_LOCK` → Pinned: solo se la nota è protetta e l'utente inserisce il PIN corretto; l'anteprima torna a mostrare il testo; aggiorna la data di modifica e salva la nota.
 - `user.MOVE_NOTE_TO_FOLDER` → Pinned: verso una cartella diversa da quella attuale; aggiorna la data di modifica e salva la nota.
 - `note-content-save.NOTE_CONTENT_SAVED` → Pinned: con il nuovo contenuto ricava di nuovo titolo, tag e anteprima, aggiorna la data di modifica e salva la nota.
-- `folder.DELETED` → Pinned: solo se la nota era nella cartella eliminata; passa nella cartella Note senza aggiornare la data di modifica e senza riscrivere il file nell'archivio Markdown, e il cambiamento viene accodato per il cloud.
+- `folder.DELETED` → Pinned: solo se la nota era nella cartella eliminata; passa nella cartella Note senza aggiornare la data di modifica, riscrivendo il file nell'archivio Markdown con la cartella nuova, e il cambiamento viene accodato per il cloud.
 - `supabase.REMOTE_FOLDER_DELETED` → Pinned: come per una nota non fissata.
 - `sync-run.CLOUD_FOLDER_REMOVED` → Pinned: come per una nota non fissata.
 
@@ -67,8 +67,8 @@ La nota è nel cestino: compare solo nella vista Cestino, conserva la cartella d
 - `user.LOCK_NOTE` → In trash: dal pulsante di protezione della barra desktop o dell'editor, alle stesse condizioni di una nota fuori dal cestino; la nota resta nel cestino.
 - `user.REMOVE_NOTE_LOCK` → In trash: dal pulsante di protezione della barra desktop o dell'editor, alle stesse condizioni di una nota fuori dal cestino; la nota resta nel cestino.
 - `note-content-save.NOTE_CONTENT_SAVED` → In trash: con il nuovo contenuto ricava di nuovo titolo, tag e anteprima, aggiorna la data di modifica e salva la nota, che resta nel cestino.
-- `folder.DELETED` → In trash: solo se la cartella di origine della nota è quella eliminata; la cartella di origine diventa Note, senza aggiornare la data di modifica e senza riscrivere il file, e il cambiamento viene accodato per il cloud.
-- `supabase.REMOTE_FOLDER_DELETED` → In trash: solo se la cartella di origine è quella eliminata altrove e viene davvero eliminata dal dispositivo; la cartella di origine diventa Note, senza aggiornare la data di modifica, senza riscrivere il file e senza accodare il cambiamento.
+- `folder.DELETED` → In trash: solo se la cartella di origine della nota è quella eliminata; la cartella di origine diventa Note, senza aggiornare la data di modifica, riscrivendo il file con la cartella nuova, e il cambiamento viene accodato per il cloud.
+- `supabase.REMOTE_FOLDER_DELETED` → In trash: solo se la cartella di origine è quella eliminata altrove e viene davvero eliminata dal dispositivo; la cartella di origine diventa Note, senza aggiornare la data di modifica, riscrivendo il file con la cartella nuova, e senza accodare il cambiamento.
 - `sync-run.CLOUD_FOLDER_REMOVED` → In trash: come per l'eliminazione della cartella ricevuta in tempo reale.
 - `user.DELETE_NOTE_PERMANENTLY` → Deleted: solo dopo che l'utente ha confermato che l'azione non può essere annullata e, se la nota è protetta, dopo aver inserito il PIN corretto; rimuove il file dall'archivio Markdown, accoda la cancellazione nel cloud e poi elimina la nota dal dispositivo.
 - `user.EMPTY_TRASH` → Deleted: per tutte le note nel cestino, solo dopo la conferma dell'utente e, se nel cestino c'è almeno una nota protetta, dopo aver inserito il PIN corretto; per ogni nota, nell'ordine, rimuove il file dall'archivio Markdown, accoda la cancellazione nel cloud ed elimina la nota dal dispositivo.

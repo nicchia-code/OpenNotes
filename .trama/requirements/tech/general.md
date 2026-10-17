@@ -25,6 +25,20 @@ description: Tecnologie, librerie e piattaforme dell'intera app; serve per quals
 - Desktop: `window_manager` 0.5.2 con finestra senza barra di sistema (barra del titolo nascosta, barra unificata disegnata dall'app), dimensione iniziale 1280×760, minima 680×480, centrata, sfondo trasparente; su Linux la finestra GTK ha titolo "OpenNotes" e non mostra alcuna barra del titolo, né quella GTK né quella aggiunta dal compositore.
 - macOS: app sandbox con permessi client e server di rete e lettura/scrittura dei file scelti dall'utente (il server serve al loopback OAuth).
 
+### Icona dell'app e schermata di avvio
+- Sorgente dell'icona: `assets/icon/OpenNotes.png` (1280×1229, riquadro arrotondato con ombra e margini trasparenti), spostato dalla radice del repository. Non è un asset Flutter: la sezione `assets` di `pubspec.yaml` non lo elenca, né elenca i file derivati.
+- Due file derivati, ricavati una volta dal sorgente e salvati nel repository accanto a lui:
+  - `assets/icon/OpenNotes-square.png`: l'immagine intera, senza ridimensionarla, centrata in un quadrato 1280×1280 con margini trasparenti;
+  - `assets/icon/OpenNotes-full-bleed.png`: quadrato pieno, senza angoli arrotondati, bordo, ombra né trasparenza, ritagliato dall'interno del riquadro alla dimensione massima che ci sta (circa 876×876 px, centrato).
+- Le icone di Android, iOS, macOS, Windows e web si generano con `flutter_launcher_icons` (dipendenza di sviluppo, versione stabile più recente compatibile con l'SDK Dart del progetto), configurato in `pubspec.yaml`; i file generati sono salvati nel repository e sostituiscono tutte le icone predefinite di Flutter.
+  - iOS: dal ritaglio a tutta superficie, senza canale alfa; gli angoli li arrotonda il sistema.
+  - Android: icona classica dal ritaglio a tutta superficie; icona adattiva con lo stesso ritaglio come livello di primo piano e come livello di sfondo.
+  - macOS, Windows e web (favicon e icone del manifest, comprese le varianti maskable): dall'immagine quadrata con margini trasparenti.
+- Linux: la finestra GTK imposta all'avvio come icona l'immagine quadrata, installata nel bundle Linux insieme all'eseguibile; l'AppImage usa la stessa immagine come icona del suo file `.desktop` al posto di `web/icons/Icon-512.png`.
+- Schermata di avvio di iOS e Android generata con `flutter_native_splash` (dipendenza di sviluppo, versione stabile più recente compatibile con l'SDK Dart del progetto), configurato in `pubspec.yaml`, solo per queste due piattaforme.
+  - Al centro l'immagine quadrata con il riquadro arrotondato intero; fondo `#FFFFFF` in tema chiaro e `#000000` in tema scuro, secondo il tema del sistema.
+  - Su Android 12 e successivi, dove il sistema ritaglia l'immagine di avvio in un cerchio, il riquadro arrotondato sta tutto dentro il cerchio, senza tagli, con gli stessi fondi.
+
 ### CI/CD (GitHub Actions)
 - Un workflow GitHub Actions verifica il codice e compila l'app per Windows, macOS e Linux; Android, iOS e web non vengono compilati in CI.
 - Avvio: push su `main`, pull request, push di tag `v*` e avvio manuale.

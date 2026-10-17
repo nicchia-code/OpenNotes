@@ -6,7 +6,7 @@ I menu che compaiono mentre si scrive nell'editor: i suggerimenti di tag e il me
 
 ### Hidden (initial)
 Nessun menu è aperto.
-- `user.EDIT_NOTE_TEXT` → Tag suggestions: se il testo prima del cursore finisce con un cancelletto, all'inizio o dopo uno spazio, seguito solo da lettere e cifre di qualunque alfabeto, trattini o trattini bassi (anche da nessun carattere).
+- `user.EDIT_NOTE_TEXT` → Tag suggestions: se il testo prima del cursore finisce con un cancelletto, all'inizio della sezione o dopo uno spazio di qualunque tipo, compresi la tabulazione e l'a capo (quindi anche a inizio riga), seguito solo da lettere e cifre di qualunque alfabeto, trattini o trattini bassi (anche da nessun carattere).
 - `user.EDIT_NOTE_TEXT` → Block menu: se non si sta scrivendo un tag e la sezione di testo comincia con una barra.
 - `user.OPEN_BLOCK_MENU` → Block menu: sotto la sezione di testo che ha il focus, anche se non comincia con una barra.
 

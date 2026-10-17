@@ -1,6 +1,6 @@
 ---
 name: trama-req-rules-editor
-description: Usare quando si cambia il comportamento dell'editor, cioè caricamento del contenuto, salvataggio ritardato, scorciatoie Markdown, Invio/Backspace/Tab, checklist, formattazione, unione di sezioni, suggerimenti di tag, tabelle e disegni.
+description: Usare quando si cambia il comportamento dell'editor, cioè caricamento del contenuto, salvataggio ritardato, formattazione, unione di sezioni, tabelle e disegni.
 ---
 # Requirements: Business rules, Editor rules
 
@@ -12,7 +12,9 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 ## note-content-save
 
 - La scrittura su disco parte 400 ms dopo l'ultima consegna. C'è un solo timer, condiviso da tutte le note. Quando l'app va in secondo piano o si chiude (anche chiudendo la finestra desktop), la scrittura in attesa parte subito.
+- Se una scrittura fallisce compare l'avviso «Nota non salvata: il salvataggio verrà ritentato.» e la versione non scritta torna in attesa, per essere ritentata alla consegna successiva o al passaggio in secondo piano; l'avviso sparisce alla prima scrittura riuscita. Se al momento del fallimento è già in attesa un'altra versione, quella non scritta viene scartata: se apparteneva a un'altra nota, quella modifica va persa e la nota torna all'ultima versione salvata.
 - Prima di fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare (anche con «Annulla») o spostare in un'altra cartella una nota: l'editor consegna subito il testo ancora in attesa, la scrittura in attesa parte subito, anche se riguarda un'altra nota, il comando attende anche una scrittura già in corso e poi agisce sulla versione appena salvata.
+- Prima di duplicare una nota: l'editor consegna subito il testo ancora in attesa e la scrittura in attesa parte subito; la copia nasce dal testo appena salvato, cioè quello visto sullo schermo.
 - La scrittura riporta sulla nota già salvata solo contenuto, titolo, tag, anteprima e data di modifica; fissaggio, protezione, cartella e cestino cambiati durante l'attesa restano.
 - Titolo ricalcolato a ogni consegna:
   - è la prima riga utile del primo blocco che ne ha una, escluse immagini e tabelle; una riga è utile se non è vuota, non è fatta di soli tag e ha ancora testo dopo aver tolto i «#» iniziali; nel testo Markdown è la prima riga non vuota che non sia fatta di soli tag;
@@ -25,7 +27,7 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 
 ## note-editor
 
-- Attesa dell'editor: 300 ms. Vale per la digitazione, per Invio, per Backspace dentro una sezione e per Tab. Quando l'app va in secondo piano o si chiude, l'editor consegna subito senza attendere.
+- Attesa dell'editor: 300 ms. Vale per la digitazione, per Invio, per Backspace dentro una sezione e per Tab. Quando l'app va in secondo piano o si chiude, l'editor consegna subito senza attendere. Tornando all'elenco su mobile (pulsante Indietro, gesto o tasto di sistema) la modifica in attesa non viene scartata: viene consegnata allo scadere dell'attesa, mentre la schermata esce, e poi salvata.
 - Salvataggio immediato, senza attesa:
   - grassetto, corsivo, sottolineato, barrato;
   - stile dal menu «Aa»;
@@ -77,44 +79,6 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
   - una tabella va dopo la parte attiva e, se la parte successiva non è testo, è seguita da una sezione vuota;
   - un'immagine va dopo la parte attiva ed è sempre seguita da una nuova sezione vuota;
   - all'apertura la parte attiva è la seconda, o la prima se ce n'è una sola.
-
-## text-line
-
-- Scorciatoie Markdown. Si applicano dopo ogni modifica, su ogni riga del testo, anche a testo incollato:
-  - «# », «## », «### » a inizio riga → stile `h1`, `h2`, `h3`, e il prefisso viene tolto;
-  - «[ ] » a inizio riga, con davanti al più «-», «*» o «•» → «○ »;
-  - «[x] » o «[X] » con lo stesso schema → «● »;
-  - «- » o «* » dopo un eventuale rientro, se non seguito da «[», «○» o «●» → simbolo del livello e spazio.
-- Simbolo di elenco: il livello è il numero di spazi diviso 2 e i simboli si alternano a ciclo: «•», «◦», «▪».
-- Invio senza Maiuscole:
-  - checklist con testo → nuova riga «○ » con lo stesso rientro; checklist vuota → toglie 2 spazi di rientro (e diventa «○ ») oppure, senza rientro, toglie il simbolo;
-  - elenco puntato con testo → nuova voce con il simbolo del livello; voce puntata vuota → riduce il rientro aggiornando il simbolo, oppure toglie il simbolo;
-  - elenco numerato con testo → nuova voce «N+1. »; voce numerata vuota → riduce il rientro tenendo il numero, oppure toglie il numero;
-  - righe `title`/`h1`/`h2`/`h3` → a capo con la nuova riga in stile corpo; se il cursore è all'inizio di una riga con testo, lo stile scende con il testo e la riga vuota sopra diventa corpo.
-- Backspace con il cursore subito dopo il prefisso di una voce di checklist o puntata: se c'è rientro lo riduce di 2 spazi (la checklist diventa «○ »); altrimenti toglie il prefisso. Le voci numerate non hanno un comportamento speciale.
-- Tab e Maiusc+Tab agiscono su ogni riga selezionata:
-  - voci puntate, checklist e numerate guadagnano o perdono 2 spazi di rientro prima del simbolo (il simbolo puntato si aggiorna, la voce numerata resta numerata); senza rientro, Maiusc+Tab toglie il simbolo;
-  - citazioni e righe monospazio guadagnano o perdono 2 spazi di rientro prima del segno e restano dello stesso tipo, anche alla riapertura della nota;
-  - righe normali: Tab aggiunge 2 spazi e Maiusc+Tab ne toglie fino a 2.
-- Checklist:
-  - il tocco conta solo se cade sul cerchio o sul carattere subito dopo (lo spazio del prefisso), non sulle lettere del testo; tra due cambi fatti con un tocco devono passare almeno 250 ms;
-  - il pulsante checklist alterna «○»/«●» (anche «[ ]»/«[x]») sulla riga del cursore; altrimenti mette davanti «○ » togliendo gli altri prefissi.
-- Stile da «Aa» o dal menu rapido, sulle righe selezionate:
-  - prima si tolgono i prefissi esistenti, solo se seguiti da uno spazio: «# », «## », «### », simboli di elenco o checklist, «- », «* », «[ ] », «[x] », «N. », «> »; «```» si toglie insieme all'eventuale spazio che lo segue. Un segno senza spazio («#lavoro», «-5 gradi», «1.5 volte», «>x») resta nel testo. Lo stesso vale per il pulsante checklist quando mette «○ »;
-  - titolo, intestazioni e corpo diventano stile di riga;
-  - elenco puntato diventa il prefisso con il simbolo del livello di rientro di ogni riga («• », «◦ » o «▪ »), con stile di riga corpo;
-  - checklist, numerato, citazione e monospazio diventano rispettivamente il prefisso «○ », «1. », «> », «``` », con stile di riga corpo.
-- Stili di riga dopo una modifica:
-  - le righe prima della modifica tengono il loro stile e quelle dopo scalano della differenza di righe;
-  - se si inseriscono a capo all'inizio di una riga senza cancellare nulla, gli stili da quella riga in giù scendono e le nuove righe sono corpo;
-  - negli altri casi la prima riga toccata tiene il proprio stile se prima del punto modificato c'era del testo; altrimenti prende lo stile dell'ultima riga toccata, o il proprio se quella non ne ha;
-  - ogni riga nuova creata dalla modifica è corpo.
-
-## editor-suggestions
-
-- Si sta scrivendo un tag quando il testo prima del cursore finisce con «#» seguito da lettere e cifre di qualunque alfabeto, «_» o «-» (anche nessuno), all'inizio o dopo uno spazio.
-- Si mostrano al massimo 5 suggerimenti: i tag esistenti il cui nome contiene il testo digitato, senza distinguere maiuscole e minuscole. Scegliere un tag sostituisce il testo dal «#» al cursore con «#nome » e il cursore va dopo lo spazio.
-- Il menu rapido compare quando il testo dell'intera sezione comincia con «/», oppure, sul telefono, quando si tocca il suo pulsante sulla barra sopra la tastiera; si chiude quando il focus lascia la sezione sotto cui è aperto, oppure appena una modifica del testo lascia la sezione senza «/» iniziale mentre non si sta scrivendo un tag, anche se il menu era stato aperto dal pulsante. Scegliendo una voce, anche «Tabella», si toglie dalla riga corrente «/» seguito da lettere e cifre di qualunque alfabeto e dagli spazi successivi, se la riga comincia con «/»; il resto del testo resta e la tabella va dopo la sezione.
 
 ## drawing-canvas
 
