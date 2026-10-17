@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.1 - 2026-10-17
+- Fixed the desktop build: CI takes the Flutter version from `.fvmrc` (3.47.7), so the dependencies of 0.2.0 resolve, and the analyzer warnings that failed the check are gone. 0.2.0 has no release packages; use 0.2.1.
+
 ## 0.2.0 - 2026-10-17
 - Added a sync app log: each failed sync run and each failed attachment upload or download is recorded with its date, category, and technical detail in `sync_log.txt` in the app documents folder, keeping the latest 500 entries.
 - Fixed protected notes: duplicate, share, Markdown export, removing the lock, and permanent deletion decide the PIN from the stored lock state, not from the copy the menu or editor showed.
