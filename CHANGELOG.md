@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.2 - 2026-10-17
+- Fixed the desktop window: on macOS the window appears at launch, centered at 1280 × 760 without the system title bar, and on Linux, Windows, and macOS it appears only after the first frame of the interface is drawn, never empty or transparent.
+
 ## 0.2.1 - 2026-10-17
 - Fixed the desktop build: CI takes the Flutter version from `.fvmrc` (3.47.7), so the dependencies of 0.2.0 resolve, and the analyzer warnings that failed the check are gone. 0.2.0 has no release packages; use 0.2.1.
 
