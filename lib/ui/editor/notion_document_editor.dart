@@ -1082,7 +1082,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final block = _currentActiveBlock;
     if (block?.controller != null) {
       block!.controller!.handleTabKey(outdent: false);
-      _refreshSuggestionsAfterKeyEdit(block!, _blocks.indexOf(block));
+      _refreshSuggestionsAfterKeyEdit(block, _blocks.indexOf(block));
       _serializeAndSave(immediate: false);
     }
   }
@@ -1092,7 +1092,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final block = _currentActiveBlock;
     if (block?.controller != null) {
       block!.controller!.handleTabKey(outdent: true);
-      _refreshSuggestionsAfterKeyEdit(block!, _blocks.indexOf(block));
+      _refreshSuggestionsAfterKeyEdit(block, _blocks.indexOf(block));
       _serializeAndSave(immediate: false);
     }
   }

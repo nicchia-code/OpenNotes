@@ -10,7 +10,6 @@ import '../../core/services/vault_service.dart';
 import '../../core/state/notes_provider.dart';
 import '../drawing/apple_pencil_canvas.dart';
 import '../editor/notion_document_editor.dart';
-import '../security/lock_note_dialog.dart';
 import '../notes_list/note_action_menu.dart';
 import '../notes_list/note_actions.dart';
 import '../theme/apple_theme.dart';
