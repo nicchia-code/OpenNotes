@@ -27,7 +27,8 @@ void main() async {
   await initializeDateFormatting('it_IT', null);
 
   // Initialize Desktop Frameless Window Manager
-  if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+  final isDesktop = !kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows);
+  if (isDesktop) {
     await windowManager.ensureInitialized();
 
     const windowOptions = WindowOptions(
@@ -39,10 +40,8 @@ void main() async {
       titleBarStyle: TitleBarStyle.hidden,
     );
 
-    windowManager.waitUntilReadyToShow(windowOptions, () async {
-      await windowManager.show();
-      await windowManager.focus();
-    });
+    // The window stays hidden here; it is shown after the first frame is drawn.
+    await windowManager.waitUntilReadyToShow(windowOptions);
   }
 
   // Initialize Core Services
@@ -99,6 +98,14 @@ void main() async {
 
   // The cloud connection is prepared after the interface appears, so it never delays the start.
   WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(syncService.init()));
+
+  // The window appears only when the first frame of the interface is drawn, never empty.
+  if (isDesktop) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
 }
 
 Future<void> _createWelcomeNotes(NotesProvider provider) async {
