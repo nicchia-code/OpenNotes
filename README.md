@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon/OpenNotes.png" width="128" alt="OpenNotes icon">
+</p>
+
 # OpenNotes
 
 A local-first notes app inspired by Apple Notes, for desktop and mobile.

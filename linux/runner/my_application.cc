@@ -34,6 +34,22 @@ static void window_method_call_cb(FlMethodChannel* channel,
   fl_method_call_respond_success(method_call, result, nullptr);
 }
 
+// Sets the window icon from the square image installed next to the executable
+// (data/icon/OpenNotes-square.png in the bundle).
+static void set_window_icon(GtkWindow* window) {
+  g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe_path == nullptr) {
+    return;
+  }
+  g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+  g_autofree gchar* icon_path =
+      g_build_filename(exe_dir, "data", "icon", "OpenNotes-square.png", nullptr);
+  g_autoptr(GError) error = nullptr;
+  if (!gtk_window_set_icon_from_file(window, icon_path, &error)) {
+    g_warning("Failed to set window icon: %s", error->message);
+  }
+}
+
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
   GtkWidget* window = gtk_widget_get_toplevel(GTK_WIDGET(view));
@@ -67,6 +83,7 @@ static void my_application_activate(GApplication* application) {
   gtk_window_set_decorated(window, FALSE);
 
   gtk_window_set_default_size(window, 1280, 760);
+  set_window_icon(window);
   // Transparent windows need an RGBA visual; without a compositing screen the
   // window stays opaque.
   GdkScreen* screen = gtk_window_get_screen(window);
