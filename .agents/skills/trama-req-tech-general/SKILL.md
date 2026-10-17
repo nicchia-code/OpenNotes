@@ -29,7 +29,9 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 - Esportazione: `pdf` 3.12.0 e `printing` 5.14.3 per il PDF, `share_plus` 13.3.0 per la condivisione, `file_picker` 12.2.0 per la scelta di file e cartelle.
 - Piattaforme: Android (applicationId `com.opennotes.open_notes`, SDK minimo/target di default Flutter), iOS, macOS, Linux, Windows; cartella web presente (manifest di template).
 - Desktop: `window_manager` 0.5.2 con finestra senza barra di sistema (barra del titolo nascosta, barra unificata disegnata dall'app), dimensione iniziale 1280×760, minima 680×480, centrata, sfondo trasparente; su Linux la finestra GTK ha titolo "OpenNotes" e non mostra alcuna barra del titolo, né quella GTK né quella aggiunta dal compositore.
+  - L'app chiama `windowManager.show()` e `windowManager.focus()` dopo il primo frame disegnato da `runApp` (callback post-frame), non nella callback di `waitUntilReadyToShow`.
 - macOS: app sandbox con permessi client e server di rete e lettura/scrittura dei file scelti dall'utente (il server serve al loopback OAuth).
+- macOS: la finestra di `MainMenu.xib` è visibile all'avvio come nel template di Flutter (senza `visibleAtLaunch="NO"`), perché su macOS il motore Flutter parte solo quando la finestra compare; `MainFlutterWindow` la nasconde subito con lo schema di `window_manager` (override di `order(_:relativeTo:)` che chiama `hiddenWindowAtLaunch()`) e la mostra poi l'app.
 
 ### Icona dell'app e schermata di avvio
 - Sorgente dell'icona: `assets/icon/OpenNotes.png` (1280×1229, riquadro arrotondato con ombra e margini trasparenti), spostato dalla radice del repository. Non è un asset Flutter: la sezione `assets` di `pubspec.yaml` non lo elenca, né elenca i file derivati.

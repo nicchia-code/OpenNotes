@@ -5,8 +5,8 @@ La finestra dell'app sui sistemi desktop (Linux, macOS, Windows), senza la barra
 ## States
 
 ### Hidden (initial)
-La finestra non è ancora visibile.
-- `operating-system.APP_LAUNCHED` → Open: solo su Linux, macOS e Windows; prepara la finestra senza barra del titolo di sistema, nella dimensione iniziale, centrata e con la dimensione minima, poi la mostra e le dà il focus, mentre l'app finisce di prepararsi.
+La finestra non è ancora visibile; resta nascosta anche mentre l'app si prepara.
+- `operating-system.APP_LAUNCHED` → Open: solo su Linux, macOS e Windows; prepara la finestra senza barra del titolo di sistema, nella dimensione iniziale, centrata e con la dimensione minima, la tiene nascosta finché l'app ha finito di prepararsi e l'interfaccia è disegnata, poi la mostra e le dà il focus.
 
 ### Open
 La finestra è visibile, senza barra del titolo di sistema. La barra superiore dell'interfaccia desktop fa da maniglia; nell'interfaccia mobile quella barra non c'è e nemmeno i comandi della finestra. Se un sistema disegna comunque la propria barra del titolo, la barra superiore dell'app resta com'è.

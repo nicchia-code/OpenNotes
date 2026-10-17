@@ -24,6 +24,7 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 
 - Vale solo su Linux, macOS e Windows.
 - Finestra iniziale 1280 × 760 px, centrata; dimensione minima 680 × 480 px, così la finestra mostra sempre l'interfaccia desktop con la barra superiore.
+- La finestra compare solo quando la prima schermata dell'interfaccia è già disegnata: non si vede mai vuota o trasparente, allo stesso modo su Linux, macOS e Windows.
 - Barra del titolo di sistema nascosta: la barra superiore dell'app è l'area di trascinamento e il doppio clic su di essa ingrandisce o ripristina la finestra.
 - Su Linux la barra del titolo del sistema non compare mai, né quella del compositore né quella del toolkit, almeno su COSMIC, Hyprland, GNOME e KDE in sessione Wayland; su altri ambienti non è garantito.
 - Se un sistema disegna comunque la propria barra del titolo, l'app non lo rileva e non cambia la propria barra superiore.
