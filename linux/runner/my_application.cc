@@ -34,16 +34,16 @@ static void window_method_call_cb(FlMethodChannel* channel,
   fl_method_call_respond_success(method_call, result, nullptr);
 }
 
-// Sets the window icon from the square image installed next to the executable
-// (data/icon/OpenNotes-square.png in the bundle).
+// Sets the window icon from the desktop app icon installed next to the
+// executable (data/icon/OpenNotes-desktop.png in the bundle).
 static void set_window_icon(GtkWindow* window) {
   g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
   if (exe_path == nullptr) {
     return;
   }
   g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
-  g_autofree gchar* icon_path =
-      g_build_filename(exe_dir, "data", "icon", "OpenNotes-square.png", nullptr);
+  g_autofree gchar* icon_path = g_build_filename(
+      exe_dir, "data", "icon", "OpenNotes-desktop.png", nullptr);
   g_autoptr(GError) error = nullptr;
   if (!gtk_window_set_icon_from_file(window, icon_path, &error)) {
     g_warning("Failed to set window icon: %s", error->message);

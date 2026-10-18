@@ -28,7 +28,7 @@ Tutte le note, Note, le cartelle dell'utente, i tag ed Eliminati di recente, cia
 - `user.CREATE_NOTE` → Editing from folders: solo se la selezione corrente non è il cestino, dove il pulsante non c'è; crea una nota nella selezione corrente e apre subito il suo editor, con ritorno "Cartelle".
 
 #### Editor from list
-Editor a schermo intero della nota aperta dalla lista, con condivisione, protezione, menu azioni e strumenti sopra la tastiera. Spostare la nota in un'altra cartella, fissarla o ripristinarla dal cestino lasciano l'editor aperto; se la nota sparisce dai dati resta mostrata la sua ultima versione.
+Editor a schermo intero della nota aperta dalla lista, con condivisione, protezione, menu azioni e strumenti sopra la tastiera. Con la nota protetta e non ancora sbloccata il pulsante del menu dei blocchi è disattivato, mentre gli altri strumenti sopra la tastiera (checklist, stile, tabella, disegno, foto) restano attivi e modificano il documento nascosto, come descritto nell'editor della nota. Spostare la nota in un'altra cartella, fissarla o ripristinarla dal cestino lasciano l'editor aperto; se la nota sparisce dai dati resta mostrata la sua ultima versione.
 
 ##### Editing from list (initial)
 - `user.NAVIGATE_BACK` → Notes list
@@ -37,7 +37,7 @@ Editor a schermo intero della nota aperta dalla lista, con condivisione, protezi
 - `user.DELETE_NOTE_PERMANENTLY` → Notes list: dal menu azioni nel cestino, solo se l'utente conferma (dopo lo sblocco, se la nota è protetta) e la nota non è protetta oppure era già sbloccata in questa sessione; chiude l'editor.
 - `user.DELETE_NOTE_PERMANENTLY` → Editing from list: dal menu azioni nel cestino, se l'utente conferma inserendo il PIN e la nota è protetta e non ancora sbloccata in questa sessione; l'editor resta aperto sul segnaposto «Questa nota è protetta» finché l'utente non torna indietro.
 - `user.DUPLICATE_NOTE` → Editing from list: sostituisce l'editor con quello della nota selezionata a copia finita (la copia, o l'originale se lo sblocco è stato annullato), con lo stesso ritorno.
-- `user.OPEN_DRAWING` → Drawing from list
+- `user.OPEN_DRAWING` → Drawing from list: anche se la nota è protetta e non ancora sbloccata in questa sessione; il disegno salvato viene inserito nel documento nascosto.
 
 ##### Drawing from list
 Tela di disegno a schermo intero sopra l'editor.
@@ -54,7 +54,7 @@ Editor a schermo intero di una nota appena creata dalle Cartelle, con gli stessi
 - `user.DELETE_NOTE_PERMANENTLY` → Folders: dal menu azioni nel cestino, solo se l'utente conferma (dopo lo sblocco, se la nota è protetta) e la nota non è protetta oppure era già sbloccata in questa sessione; chiude l'editor.
 - `user.DELETE_NOTE_PERMANENTLY` → Editing from folders: dal menu azioni nel cestino, se l'utente conferma inserendo il PIN e la nota è protetta e non ancora sbloccata in questa sessione; l'editor resta aperto sul segnaposto «Questa nota è protetta» finché l'utente non torna indietro.
 - `user.DUPLICATE_NOTE` → Editing from folders: sostituisce l'editor con quello della nota selezionata a copia finita (la copia, o l'originale se lo sblocco è stato annullato), con lo stesso ritorno.
-- `user.OPEN_DRAWING` → Drawing from folders
+- `user.OPEN_DRAWING` → Drawing from folders: anche se la nota è protetta e non ancora sbloccata in questa sessione; il disegno salvato viene inserito nel documento nascosto.
 
 ##### Drawing from folders
 Tela di disegno a schermo intero sopra l'editor.

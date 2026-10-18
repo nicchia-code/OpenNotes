@@ -13,10 +13,12 @@ Non c'è nessuna scrittura in attesa.
 
 ### Waiting
 Una versione della nota aspetta di essere scritta.
-- `note-editor.CONTENT_CHANGED` → Waiting: se la nota è tra quelle dell'elenco caricato. La aggiorna in memoria e fa ripartire l'attesa. La versione in attesa viene sostituita anche quando apparteneva a un'altra nota: quella nota non viene più scritta.
+- `note-editor.CONTENT_CHANGED` → Waiting: se la nota è tra quelle dell'elenco caricato. La aggiorna in memoria e fa ripartire l'attesa. Se la versione in attesa apparteneva a un'altra nota, quella viene prima scritta subito, come allo scadere dell'attesa, e la nuova prende il suo posto in attesa.
 - `note-editor.CONTENT_CHANGED` → Idle: se la nota è tra quelle dell'elenco caricato e l'editor consegna perché l'app sta lasciando il primo piano, oppure perché sta per partire un comando sulla nota. Aggiorna la nota in memoria e la scrive subito, senza attesa.
 - `time.CONTENT_SAVE_DEBOUNCE_ELAPSED` → Idle: scrive la nota nel database locale, riscrive il suo file Markdown nel vault, la segnala alla sincronizzazione e ricalcola l'elenco dei tag.
 - `operating-system.APP_LEAVING_FOREGROUND` → Idle: scrive subito la versione in attesa, come allo scadere dell'attesa. Su mobile il sistema può sospendere l'app prima che la scrittura finisca.
+- `sync-run.CLOUD_NOTE_APPLIED` → Idle: se la versione del cloud applicata è protetta, anche se riguarda un'altra nota o una nota già protetta. Dopo che l'editor ha consegnato il testo ancora in attesa e prima che la nota venga nascosta, scrive subito la versione in attesa, come allo scadere dell'attesa, anche se appartiene a un'altra nota.
+- `realtime-channel.CLOUD_NOTE_APPLIED` → Idle: alle stesse condizioni e con lo stesso effetto della sincronizzazione.
 - `user.PIN_NOTE` → Idle: prima che il comando agisca, scrive subito la versione in attesa, come allo scadere dell'attesa, anche se appartiene a un'altra nota; il comando agisce poi sulla versione appena salvata.
 - `user.UNPIN_NOTE` → Idle: come per il fissaggio.
 - `user.LOCK_NOTE` → Idle: come per il fissaggio.

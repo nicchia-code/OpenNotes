@@ -851,6 +851,37 @@ void main() {
     provider.dispose();
   });
 
+  test('a note created in a folder deleted elsewhere moves the view to Notes and selects it', () async {
+    final now = DateTime.utc(2026, 10, 1, 9);
+    await dbService.upsertFolder(Folder(id: 'cloud-gone-2', name: 'Eliminata altrove', createdAt: now, updatedAt: now));
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+    );
+    await provider.init();
+    provider.selectFolder('cloud-gone-2');
+
+    await syncService.handleRemoteFolderChange(PostgresChangePayload(
+      schema: 'public',
+      table: 'folders',
+      commitTimestamp: DateTime.utc(2026, 10, 2),
+      eventType: PostgresChangeEvent.delete,
+      newRecord: const {},
+      oldRecord: const {'id': 'cloud-gone-2'},
+      errors: null,
+    ));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    final created = await provider.createNote(initialTitle: 'Creata');
+    expect(created, isNotNull);
+    expect(provider.selectedFolderId, Folder.defaultNotesId);
+    expect(provider.notes.map((n) => n.id), contains(created!.id));
+    expect(provider.selectedNoteId, created.id);
+
+    provider.dispose();
+  });
+
   test('a folder deleted here moves the open view to All notes', () async {
     final provider = NotesProvider(
       dbService: dbService,
@@ -992,6 +1023,40 @@ void main() {
     expect(provider.contentSaveFailed, isFalse);
     expect((await dbService.getNoteById('a'))!.content, 'Testo nuovo');
 
+    provider.dispose();
+  });
+
+  test('a discarded waiting version is taken back out of the note list', () async {
+    final now = DateTime.now();
+    for (final id in ['a', 'b']) {
+      await dbService.upsertNote(Note(
+        id: id,
+        title: id.toUpperCase(),
+        content: id.toUpperCase(),
+        createdAt: now,
+        updatedAt: now,
+      ));
+    }
+
+    final provider = NotesProvider(
+      dbService: dbService,
+      vaultService: vaultService,
+      syncService: syncService,
+    );
+    await provider.init();
+
+    // A vault path that is a file cannot be written
+    await tempDir.delete(recursive: true);
+    await File(tempDir.path).writeAsString('not a folder');
+    provider.updateNoteContent('a', 'Testo scartato');
+    // Editing b writes a at once; a's write fails after b has taken its place as the waiting version
+    provider.updateNoteContent('b', 'Testo b');
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+
+    expect(provider.notes.firstWhere((n) => n.id == 'a').content, 'A');
+    expect((await dbService.getNoteById('a'))!.content, 'A');
+
+    await File(tempDir.path).delete();
     provider.dispose();
   });
 

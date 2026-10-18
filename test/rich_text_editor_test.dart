@@ -2050,6 +2050,22 @@ Testo normale di corpo
     );
 
     test(
+      'Note.toMarkdownBody keeps the whole first line when the title is clipped',
+      () {
+        final longLine = '${'A' * 60} resto della riga';
+        final plain = Note(
+          id: 'body-clipped-title-plain',
+          title: 'A' * 60,
+          content: '$longLine\nSeconda riga',
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+        expect(plain.title, 'A' * 60);
+        expect(plain.toMarkdownBody(), '$longLine\nSeconda riga');
+      },
+    );
+
+    test(
       'Note.toMarkdown removes trailing blank lines from plain-text notes',
       () {
         final note = Note(
@@ -2128,6 +2144,33 @@ Testo normale di corpo
           note.toMarkdown(),
           '# Titolo\n- [ ] \nRiga successiva',
         );
+      },
+    );
+
+    test(
+      'Note.toMarkdown turns an empty title line in a paragraph block into a heading marker',
+      () {
+        final jsonBlocks = [
+          {
+            'id': 'block-empty-title-line',
+            'type': 'paragraph',
+            'text': '\nCorpo',
+            'lineStyles': {
+              '0': 'title',
+              '1': 'paragraph',
+            },
+          },
+        ];
+
+        final note = Note(
+          id: 'block-empty-title-line-note',
+          title: 'Titolo',
+          content: jsonEncode(jsonBlocks),
+          createdAt: DateTime.now(),
+          updatedAt: DateTime.now(),
+        );
+
+        expect(note.toMarkdown(), '# \nCorpo');
       },
     );
 

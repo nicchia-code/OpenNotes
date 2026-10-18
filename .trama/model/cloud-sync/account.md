@@ -7,7 +7,7 @@ L'account Google con cui l'utente accede al cloud. C'è al massimo una sessione 
 ### Signed out (initial)
 Nessun utente connesso: le modifiche alle note e alle cartelle restano in coda sul dispositivo e l'indicatore della sincronizzazione non è mostrato.
 - `supabase.INITIAL_SESSION` → Signed in: solo se esiste una sessione conservata da un avvio precedente.
-- `supabase.SIGNED_IN` → Signed in: solo se l'evento porta una sessione, anche se l'app non stava attendendo il ritorno dal browser; come per ogni accesso, parte una sincronizzazione con controllo completo e si apre il canale in tempo reale.
+- `supabase.SIGNED_IN` → Signed in: solo se l'evento porta una sessione, anche se l'app non stava attendendo il ritorno dal browser; come per ogni accesso, parte una sincronizzazione con controllo completo (senza rete il controllo completo viene ricordato per il ritorno della rete) e si apre il canale in tempo reale.
 - `user.SIGN_IN_WITH_GOOGLE` → Signed out: se il collegamento al cloud non è pronto; se la build non fornisce l'indirizzo o la chiave del progetto cloud mostra l'avviso di cloud non configurato, che nomina ciò che manca, altrimenti mostra l'errore "Supabase non è ancora configurato".
 - `user.SIGN_IN_WITH_GOOGLE` → Signed out: se il browser non può essere aperto; mostra "Accesso Google non completato".
 - `user.SIGN_IN_WITH_GOOGLE` → Signed out: se l'avvio dell'accesso fallisce per un altro errore imprevisto, per esempio del servizio cloud durante la preparazione; il ricevitore locale aperto per il tentativo viene chiuso, non resta alcuna attesa del ritorno e la finestra mostra "Accesso Google non completato".
@@ -26,3 +26,4 @@ Il browser è aperto sull'accesso Google e l'app attende il ritorno; intanto la 
 L'utente è connesso e l'app mostra l'indicatore della sincronizzazione. La finestra delle impostazioni mostra la sua email, lo stato della sincronizzazione, l'ora dell'ultima sincronizzazione, il numero di modifiche in attesa, l'ultimo errore con il prossimo tentativo e le note e cartelle non sincronizzate con le loro azioni, e permette di sincronizzare (con controllo completo) o disconnettersi.
 - `user.SIGN_OUT` → Signed out: chiude la sessione sul cloud. Le note locali e la coda dei cambiamenti restano sul dispositivo.
 - `supabase.SIGNED_OUT` → Signed out: la sessione termina per qualsiasi altro motivo.
+- `supabase.SIGNED_IN` → Signed in: solo se l'evento porta una sessione, per esempio quando l'utente rifà l'accesso mentre è già connesso; vale come un nuovo accesso: parte una sincronizzazione con controllo completo (senza rete il controllo completo viene ricordato per il ritorno della rete) e il canale in tempo reale viene chiuso e riaperto.

@@ -175,7 +175,8 @@ void main() {
     expect(await dbService.getNoteById('welcome-1'), isNull, reason: 'welcome note discarded when the cloud has notes');
     expect(noteUpserts, isNot(contains('welcome-1')));
     expect(cloudRows.containsKey('welcome-1'), isFalse);
-    expect(removedIds(), contains('welcome-1'));
+    expect(removedIds(), isNot(contains('welcome-1')), reason: 'a discarded welcome note is not CLOUD_NOTE_REMOVED');
+    expect(events.whereType<SampleNoteDiscarded>().map((e) => e.noteId), contains('welcome-1'), reason: 'SAMPLE_NOTE_DISCARDED');
 
     // Scenario 2: the cloud has only deleted notes: the welcome note stays and is sent.
     // The synced note the cloud no longer lists is removed by the same run (CLOUD_NOTE_REMOVED, checked again below).
@@ -316,5 +317,6 @@ void main() {
     expect(moved!.folderId, Folder.defaultNotesId);
     expect(moved.updatedAt.isAtSameMomentAs(folderTime), isTrue, reason: 'the move keeps the modification date');
     expect(await dbService.getPendingSyncActions(), isEmpty, reason: 'a cloud folder delete is not queued');
+    expect(events.whereType<CloudFolderRemoved>().map((e) => e.folderId), contains('cf-1'), reason: 'CLOUD_FOLDER_REMOVED');
   });
 }

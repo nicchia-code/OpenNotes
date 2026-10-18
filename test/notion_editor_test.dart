@@ -1333,6 +1333,128 @@ Testo dopo
   );
 
   testWidgets(
+    'NotionDocumentEditor does not add an empty section after an inserted table when the next part is a text section of another type',
+    (tester) async {
+      final note = Note(
+        id: 'test-table-insert-before-checklist',
+        title: 'Tabella prima di checklist',
+        content:
+            '[{"id":"t1","type":"table","tableData":[["A","B"],["1","2"]]},{"id":"c1","type":"checklist","text":"Voce","isChecked":false,"spans":[]}]',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      final editorKey = GlobalKey<NotionDocumentEditorState>();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(key: editorKey, note: note),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // A text section that is not a paragraph follows the table (in memory the type is set by editing commands)
+      final before = editorKey.currentState!.debugBlocks;
+      expect(before, hasLength(2));
+      before[1].type = BlockType.checklist;
+
+      // Cursor in a table cell makes the table the active part
+      await tester.tap(find.widgetWithText(TextField, '2'));
+      await tester.pumpAndSettle();
+
+      editorKey.currentState!.insertTable();
+      await tester.pumpAndSettle();
+
+      // The new table goes between the old table and the text section, which stays as it was
+      final after = editorKey.currentState!.debugBlocks;
+      expect(after.map((b) => b.type).toList(), [
+        BlockType.table,
+        BlockType.table,
+        BlockType.checklist,
+      ]);
+      expect(after.last.text, before[1].text);
+    },
+  );
+
+  testWidgets(
+    'NotionDocumentEditor blank-area tap only focuses the last part when it is an empty text section of another type',
+    (tester) async {
+      final note = Note(
+        id: 'test-blank-tap-empty-checklist',
+        title: 'Tocco area vuota',
+        content:
+            '[{"id":"t1","type":"table","tableData":[["A","B"]]},{"id":"p1","type":"paragraph","text":""}]',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      final editorKey = GlobalKey<NotionDocumentEditorState>();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(key: editorKey, note: note),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The last part is an empty text section, but a checklist rather than a paragraph
+      editorKey.currentState!.debugBlocks.last.type = BlockType.checklist;
+      await tester.pumpAndSettle();
+
+      // Tap the blank area under the document
+      final list = find.byType(ListView);
+      await tester.tapAt(tester.getBottomLeft(list) + const Offset(60, -5));
+      await tester.pumpAndSettle();
+
+      // No new section: the empty checklist only gets the focus
+      expect(
+        editorKey.currentState!.debugBlocks.map((b) => b.type).toList(),
+        [BlockType.table, BlockType.checklist],
+      );
+    },
+  );
+
+  testWidgets(
     'NotionDocumentEditor loads a remote version while a table cell has the cursor',
     (tester) async {
       const content = '''# Nota Remota Tabella
@@ -1610,6 +1732,77 @@ Testo dopo
   );
 
   testWidgets(
+    'NotionDocumentEditor quick menu removes a slash command with combining marks',
+    (tester) async {
+      final note = Note(
+        id: 'test-table-combining-command',
+        title: 'Nota Comando Segni',
+        content: '',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      final editorKey = GlobalKey<NotionDocumentEditorState>();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(key: editorKey, note: note),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final firstSection = find.byType(TextField).first;
+      await tester.tap(firstSection);
+      await tester.pumpAndSettle();
+      // Hindi word with vowel signs (Mn) and a Thai word with a tone mark, both after the '/'.
+      await tester.enterText(firstSection, '/किताब');
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Tabella'));
+      await tester.tap(find.text('Tabella'));
+      await tester.pumpAndSettle();
+
+      final sectionAfter = tester.widget<TextField>(
+        find.byType(TextField).first,
+      );
+      expect(sectionAfter.controller?.text, isEmpty);
+
+      final thaiSection = find.byType(TextField).first;
+      await tester.tap(thaiSection);
+      await tester.pumpAndSettle();
+      await tester.enterText(thaiSection, '/ไทย ');
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Tabella'));
+      await tester.tap(find.text('Tabella'));
+      await tester.pumpAndSettle();
+
+      final thaiAfter = tester.widget<TextField>(
+        find.byType(TextField).first,
+      );
+      expect(thaiAfter.controller?.text, isEmpty);
+    },
+  );
+
+  testWidgets(
     'NotionDocumentEditor quick menu style lands on the slash line, not the last line',
     (tester) async {
       final note = Note(
@@ -1791,6 +1984,73 @@ Testo dopo
       await tester.pumpAndSettle();
 
       expect(find.text('Tabella'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'NotionDocumentEditor Shift+Tab that leaves the text unchanged keeps the Block menu open',
+    (tester) async {
+      final note = Note(
+        id: 'test-tab-without-text-change',
+        title: 'Tab senza modifiche',
+        content: '',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+
+      final db = DatabaseService();
+      final vault = VaultService();
+      final sync = SyncService(db, vault);
+      final security = SecurityService();
+      final provider = NotesProvider(
+        dbService: db,
+        vaultService: vault,
+        syncService: sync,
+      );
+      final editorKey = GlobalKey<NotionDocumentEditorState>();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider.value(value: db),
+            Provider.value(value: vault),
+            ChangeNotifierProvider.value(value: sync),
+            ChangeNotifierProvider.value(value: security),
+            ChangeNotifierProvider.value(value: provider),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: NotionDocumentEditor(key: editorKey, note: note),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // A plain section without a leading slash: Shift+Tab at its start changes nothing, so the menu opened by the button stays.
+      final firstSection = find.byType(TextField).first;
+      await tester.tap(firstSection);
+      await tester.pumpAndSettle();
+      await tester.enterText(firstSection, 'Testo');
+      await tester.pumpAndSettle();
+
+      editorKey.currentState?.openBlockMenu();
+      await tester.pumpAndSettle();
+      expect(find.text('Tabella'), findsOneWidget);
+
+      final ctrl =
+          tester.widget<TextField>(firstSection).controller
+              as RichTextEditingController;
+      ctrl.selection = const TextSelection.collapsed(offset: 0);
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+
+      expect(ctrl.text, 'Testo');
+      expect(find.text('Tabella'), findsOneWidget);
     },
   );
 

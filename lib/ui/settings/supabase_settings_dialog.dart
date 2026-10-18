@@ -309,11 +309,6 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
                           style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                         ),
                       ),
-                      CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        child: const Text('Disconnetti', style: TextStyle(color: CupertinoColors.destructiveRed, fontSize: 13)),
-                        onPressed: () => _handleSignOut(auth),
-                      ),
                     ],
                   ),
                 ),
@@ -425,6 +420,12 @@ class _SupabaseSettingsDialogState extends State<SupabaseSettingsDialog> {
                           'Sincronizza Adesso',
                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: CupertinoColors.black),
                         ),
+                ),
+                const SizedBox(height: 14),
+                CupertinoButton(
+                  padding: EdgeInsets.zero,
+                  child: const Text('Disconnetti', style: TextStyle(color: CupertinoColors.destructiveRed, fontSize: 13)),
+                  onPressed: () => _handleSignOut(auth),
                 ),
               ] else ...[
                 Text(

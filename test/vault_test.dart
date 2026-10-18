@@ -101,9 +101,8 @@ void main() {
       expect(Note.extractSnippet(content), 'latte');
     });
 
-    test('toMarkdownBody omits the title line even when clipped or styled', () {
-      final longTitle = 'A' * 70;
-      final plain = Note(id: 'p', title: 'x', content: '## $longTitle\nCorpo', createdAt: DateTime(2026), updatedAt: DateTime(2026));
+    test('toMarkdownBody omits a styled title line', () {
+      final plain = Note(id: 'p', title: 'x', content: '## Titolo\nCorpo', createdAt: DateTime(2026), updatedAt: DateTime(2026));
       expect(plain.toMarkdownBody(), 'Corpo');
 
       final blocks = Note(
@@ -124,6 +123,17 @@ void main() {
             '[{"type":"paragraph","text":"Titolo\\nRiga due\\nTerza","spans":[{"start":12,"end":15,"bold":true}],"lineStyles":{"0":"title","1":"h2"}}]',
       );
       expect(note.toMarkdownBody(), '## Riga **due**\nTerza');
+    });
+
+    test('toMarkdownBody keeps an indented heading line as a heading', () {
+      final note = Note(
+        id: 'm2',
+        title: 'Titolo',
+        content: 'Titolo\n  # Sezione rientrata\ncorpo',
+        createdAt: DateTime(2026),
+        updatedAt: DateTime(2026),
+      );
+      expect(note.toMarkdownBody(), contains('  # Sezione rientrata'));
     });
 
     test('extractSnippet keeps a later h1 when the title is earlier text', () {

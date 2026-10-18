@@ -25,15 +25,29 @@ final class CloudNoteApplied extends RemoteChange {
   const CloudNoteApplied(this.noteId, {required this.isLocked});
 }
 
-/// CLOUD_NOTE_REMOVED: a note removed from this device by the cloud: a realtime delete, or a removal made by a sync run (account change, discarded welcome note, note deleted in the cloud).
+/// CLOUD_NOTE_REMOVED: a note removed from this device because the cloud deleted it: a realtime delete, a sync run that
+/// found it gone, or a queued save that the cloud answered with a delete.
 final class CloudNoteRemoved extends RemoteChange {
   final String noteId;
   const CloudNoteRemoved(this.noteId);
 }
 
-/// A local folder was removed or changed by the cloud; the Model names no folder event, so lists just reload.
-final class CloudFolderChanged extends RemoteChange {
-  const CloudFolderChanged();
+/// SAMPLE_NOTE_DISCARDED: a never-synced welcome note removed for good because the cloud already has notes.
+final class SampleNoteDiscarded extends RemoteChange {
+  final String noteId;
+  const SampleNoteDiscarded(this.noteId);
+}
+
+/// PREVIOUS_ACCOUNT_NOTE_REMOVED: a synced note removed for good when another account connected to this device.
+final class PreviousAccountNoteRemoved extends RemoteChange {
+  final String noteId;
+  const PreviousAccountNoteRemoved(this.noteId);
+}
+
+/// CLOUD_FOLDER_REMOVED: a local folder removed because the cloud deleted it.
+final class CloudFolderRemoved extends RemoteChange {
+  final String folderId;
+  const CloudFolderRemoved(this.folderId);
 }
 
 /// Follows the status of the Realtime channel (realtime-channel Listening and Interrupted). A SUBSCRIBED that follows an
@@ -230,8 +244,9 @@ SyncErrorCategory? _categoryOfCloudStatus(String? code) {
   return null;
 }
 
-/// Whether the cloud refused a queued change: a permission or constraint error on its row. Network, timeout, session
-/// and cloud failures are not refusals: the change stays queued without being counted.
+/// Whether the cloud refused a queued change: a 4xx answer other than 401, 408 and 429, or a database error for a
+/// constraint (class 23), invalid data (class 22) or permission (class 42). Any other error, such as a transient
+/// database error (40, 55, 54), is not a refusal: the change stays queued without being counted and the run fails.
 bool isCloudRejection(Object error) {
   if (error is! PostgrestException) return false;
   final code = error.code;
@@ -242,8 +257,8 @@ bool isCloudRejection(Object error) {
     final status = int.parse(code);
     return status >= 400 && status < 500 && status != 401 && status != 408 && status != 429;
   }
-  // Database error code (SQLSTATE): connection, resource, operator, system and internal errors are cloud failures.
-  return !RegExp(r'^(08|53|57|58|XX)').hasMatch(code) && !code.startsWith('PGRST');
+  // Database error code (SQLSTATE): only constraint, invalid data and permission errors are refusals.
+  return RegExp(r'^(22|23|42)').hasMatch(code);
 }
 
 /// Bidirectional Local-First Sync Service for Supabase.
@@ -369,8 +384,9 @@ class SyncService extends ChangeNotifier {
   String? get signInError => _signInError;
 
   /// Emits when a cloud change has been applied to or removed from the local copy: a note stored
-  /// ([CloudNoteApplied]), a note removed ([CloudNoteRemoved]) or a folder changed. Listeners reload their
-  /// lists on each event, even while a full sync is running.
+  /// ([CloudNoteApplied]), a note or folder removed ([CloudNoteRemoved], [CloudFolderRemoved]) or a note discarded
+  /// by a sync run ([SampleNoteDiscarded], [PreviousAccountNoteRemoved]). Listeners reload their lists on each
+  /// event, even while a full sync is running.
   Stream<RemoteChange> get remoteChanges => _remoteChanges.stream;
 
   SupabaseClient? get _client {
@@ -705,7 +721,6 @@ class SyncService extends ChangeNotifier {
     // A queued delete of the folder yields to a cloud copy not older than it: _storeCloudFolder decides.
     if (await _storeCloudFolder(Folder.fromSupabaseJson(record))) {
       notifyListeners();
-      _remoteChanges.add(const CloudFolderChanged());
     }
   }
 
@@ -716,12 +731,14 @@ class SyncService extends ChangeNotifier {
     // A placeholder on a revision the device already has is an echo of its own send or an older delete: nothing happens.
     if (_alreadySeen(remoteRevision: revision, localRevision: local?.cloudRevision)) return;
     if (deletedAt != null && await _hasNewerQueuedFolderChange(id, deletedAt)) return;
+    // A system folder is never deleted by the cloud: its local copy and its notes stay as they are.
+    if (local?.isSystem ?? false) return;
     await _rewriteNotesMovedFrom(id);
     await _dbService.deleteFolder(id);
     // A change still queued for the deleted folder stays: the next sync sends it under "vince l'ultima modifica" (it is
     // sent only if it is strictly newer than the cloud version), so a newer rename recreates the folder in the cloud.
     notifyListeners();
-    _remoteChanges.add(const CloudFolderChanged());
+    if (local != null) _remoteChanges.add(CloudFolderRemoved(id));
   }
 
   /// Rewrites the vault copies of the notes of a folder the cloud deleted, so they name Notes, where they move to.
@@ -793,9 +810,11 @@ class SyncService extends ChangeNotifier {
         await _dbService.removeSyncActionsFor('note', note.id);
         await _dbService.deleteNoteRow(note.id);
         await _vaultService.deleteNoteFileIfUnused(_dbService, note.filePath);
-        _remoteChanges.add(CloudNoteRemoved(note.id));
+        _remoteChanges.add(PreviousAccountNoteRemoved(note.id));
       }
-      await _dbService.removeQueuedDeletesOfPurgedSyncedNotes();
+      for (final id in await _dbService.removeQueuedDeletesOfPurgedSyncedNotes()) {
+        _remoteChanges.add(PreviousAccountNoteRemoved(id));
+      }
       await _dbService.forgetCloudState();
       await prefs.remove(lastRevisionKey);
     }
@@ -830,6 +849,8 @@ class SyncService extends ChangeNotifier {
   /// Runs a sync, then one more run when requests arrived during it: a single run, full when one of them asked for it
   /// (Model: sync-run COMPLETED → Running).
   Future<void> _runLoop(bool full) async {
+    // Model: a run that starts cancels the count of the previous one; the count restarts only when the run ends.
+    _triggers?.cancelInterval();
     _isSyncing = true;
     notifyListeners();
     var nextFull = full;
@@ -1134,9 +1155,10 @@ class SyncService extends ChangeNotifier {
         }
         break;
       case _Gone():
-        // The cloud no longer has the folder: a save is dropped with it, and the folder leaves the device.
-        await _dbService.removeSyncActionIfUnchanged(item);
+        // The cloud no longer has the folder: it leaves the device with every queued change of it, the newer ones too
+        // (Model: CLOUD_FOLDER_REMOVED; Requirements: rules#sync-run).
         if (item['action'] != 'delete') await _removeRemoteFolder(id);
+        await _dbService.removeSyncActionsFor('folder', id);
         break;
       case _Unsettled():
         break;
@@ -1374,7 +1396,7 @@ class SyncService extends ChangeNotifier {
       if (isWelcomeNote(current) && await _cloudHasNotes(run)) {
         await _dbService.permanentlyDeleteNote(current.id);
         await _vaultService.deleteNoteFileIfUnused(_dbService, current.filePath);
-        _remoteChanges.add(CloudNoteRemoved(current.id));
+        _remoteChanges.add(SampleNoteDiscarded(current.id));
         return;
       }
       final sent = current;
@@ -1462,7 +1484,6 @@ class SyncService extends ChangeNotifier {
       }
       if (await _storeCloudFolder(Folder.fromSupabaseJson(row), force: run.forcedFolders.contains(entry.key))) {
         notifyListeners();
-        _remoteChanges.add(const CloudFolderChanged());
       }
     }
   }
@@ -1490,17 +1511,13 @@ class SyncService extends ChangeNotifier {
       if (local.syncedAt == null || run.pushedNotes.contains(local.id) || run.fullNoteIds.contains(local.id)) continue;
       await _removeRemoteNote(local.id);
     }
-    var removedFolder = false;
     for (final local in await _dbService.getFolders()) {
       if (local.isSystem || run.pushedFolders.contains(local.id) || run.fullFolderIds.contains(local.id)) continue;
       if (await _dbService.hasPendingSyncAction(entityType: 'folder', entityId: local.id)) continue;
       await _rewriteNotesMovedFrom(local.id);
       await _dbService.deleteFolder(local.id);
-      removedFolder = true;
-    }
-    if (removedFolder) {
       notifyListeners();
-      _remoteChanges.add(const CloudFolderChanged());
+      _remoteChanges.add(CloudFolderRemoved(local.id));
     }
   }
 
@@ -1683,7 +1700,7 @@ class SyncService extends ChangeNotifier {
     final client = _client;
     if (client == null || currentUser == null) return false;
     final table = entityType == 'folder' ? 'folders' : 'notes';
-    final cloudRow = await client.from(table).select('purged_at').eq('id', entityId).maybeSingle();
+    final cloudRow = await client.from(table).select('purged_at').eq('id', entityId).maybeSingle().timeout(requestTimeout);
     if (cloudRow == null || cloudRow['purged_at'] != null) return false;
     if (!await _dbService.removeSetAsideSyncAction(entityType, entityId)) return false;
     if (entityType == 'note') {
@@ -1717,7 +1734,8 @@ class SyncService extends ChangeNotifier {
               .from(isFolder ? 'folders' : 'notes')
               .select('${isFolder ? 'name' : 'title'}, purged_at')
               .eq('id', entityId)
-              .maybeSingle();
+              .maybeSingle()
+              .timeout(requestTimeout);
           if (cloudRow != null) {
             cloudTitle = cloudRow[isFolder ? 'name' : 'title'] as String?;
             cloudHasCopy = cloudRow['purged_at'] == null;

@@ -169,9 +169,7 @@ class NoteActions {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
-                  savedName == null
-                      ? 'Nota esportata.'
-                      : 'Nota esportata come $savedName',
+                  'Nota esportata come ${savedName ?? fileName}',
                 ),
               ),
             );
@@ -225,12 +223,16 @@ class NoteActions {
   }
 
   /// Readable file name carried by the URI of a file returned by the save
-  /// dialog, or null when the URI carries none (for example an opaque Android
-  /// content identifier).
+  /// dialog, or null when the URI carries none. A local file always has a
+  /// readable name, with or without extension; a content identifier (for
+  /// example an opaque Android content identifier) is readable only with an
+  /// extension.
   static String? savedFileName(Uri uri) {
     final segments = uri.pathSegments.where((s) => s.isNotEmpty);
     if (segments.isEmpty) return null;
     final last = segments.last.split(RegExp(r'[/:]')).last;
+    if (last.isEmpty) return null;
+    if (uri.scheme == 'file') return last;
     return RegExp(r'\.[A-Za-z0-9]+$').hasMatch(last) ? last : null;
   }
 
@@ -242,6 +244,7 @@ class NoteActions {
     if (!note.isLocked) return true;
     if (!context.mounted) return false;
     final security = context.read<SecurityService>();
+    if (security.isNoteUnlocked(note.id)) return true;
     return LockNoteDialog.showUnlockDialog(context, security);
   }
 

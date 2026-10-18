@@ -232,6 +232,8 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(CupertinoSearchTextField), 'Contenuto');
+    // The search refresh reads the database: let it finish in real time, outside the fake clock.
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
     await tester.pumpAndSettle();
     expect(provider.searchQuery, 'Contenuto');
 

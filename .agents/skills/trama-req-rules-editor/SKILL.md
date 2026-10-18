@@ -15,6 +15,7 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 - Se una scrittura fallisce compare l'avviso «Nota non salvata: il salvataggio verrà ritentato.» e la versione non scritta torna in attesa, per essere ritentata alla consegna successiva o al passaggio in secondo piano; l'avviso sparisce alla prima scrittura riuscita. Se al momento del fallimento è già in attesa un'altra versione, quella non scritta viene scartata: se apparteneva a un'altra nota, quella modifica va persa e la nota torna all'ultima versione salvata.
 - Prima di fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare (anche con «Annulla») o spostare in un'altra cartella una nota: l'editor consegna subito il testo ancora in attesa, la scrittura in attesa parte subito, anche se riguarda un'altra nota, il comando attende anche una scrittura già in corso e poi agisce sulla versione appena salvata.
 - Prima di duplicare una nota: l'editor consegna subito il testo ancora in attesa e la scrittura in attesa parte subito; la copia nasce dal testo appena salvato, cioè quello visto sullo schermo.
+- Quando viene applicata una versione del cloud protetta, anche di un'altra nota o di una nota già protetta: l'editor consegna subito il testo ancora in attesa e, prima che la nota venga nascosta, la scrittura in attesa parte subito, anche se riguarda un'altra nota.
 - La scrittura riporta sulla nota già salvata solo contenuto, titolo, tag, anteprima e data di modifica; fissaggio, protezione, cartella e cestino cambiati durante l'attesa restano.
 - Titolo ricalcolato a ogni consegna:
   - è la prima riga utile del primo blocco che ne ha una, escluse immagini e tabelle; una riga è utile se non è vuota, non è fatta di soli tag e ha ancora testo dopo aver tolto i «#» iniziali; nel testo Markdown è la prima riga non vuota che non sia fatta di soli tag;
@@ -22,7 +23,7 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
   - le righe fatte di soli tag vengono saltate anche dentro un blocco che ha altro testo;
   - perde i «#» iniziali e si taglia a 60 caratteri;
   - se non c'è, vale «Nuova nota».
-- Tag: ogni «#nome» (lettere e cifre di qualunque alfabeto, «_», «-») all'inizio del testo o dopo uno spazio o una parentesi, sia nel testo sia nelle celle delle tabelle. Si salvano in minuscolo, senza duplicati e in ordine alfabetico.
+- Tag: ogni «#nome» (lettere e cifre di qualunque alfabeto, «_», «-») all'inizio del testo, dopo uno spazio o dopo una tra «(», «[» e «{», sia nel testo sia nelle celle delle tabelle. Si salvano in minuscolo, senza duplicati e in ordine alfabetico.
 - L'anteprima viene ricalcolata a ogni consegna: circa 90 caratteri, senza il titolo; per una nota protetta è «Questa nota è protetta».
 
 ## note-editor

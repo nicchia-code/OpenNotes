@@ -1,5 +1,5 @@
 ---
-description: Usa quando converti una nota in Markdown, impagini il PDF di una nota o calcoli i nomi dei file esportati e del vault.
+description: Usa quando converti una nota in Markdown o calcoli i nomi dei file esportati e del vault.
 ---
 # Export rules
 
@@ -18,11 +18,7 @@ description: Usa quando converti una nota in Markdown, impagini il PDF di una no
 ## export-markdown-file
 - Nome proposto: titolo con `\ / : * ? " < > |` sostituiti da `_`, spazi agli estremi rimossi; se vuoto `Nota`; più `.md`.
 - Contenuto: conversione Markdown della nota codificata in UTF-8, tipo `text/markdown`.
-
-## export-pdf
-- Pagina A4, margini di 40 punti su ogni lato, più pagine se il testo lo richiede; documento intitolato `<titolo>.pdf`.
-- Intestazione: data dell'ultima modifica nel formato `d MMMM yyyy, HH:mm` in italiano (`it_IT`), grigio, 10 punti; poi titolo 22 punti grassetto, linea divisoria grigio chiaro spessa 0,5.
-- Corpo dalla conversione in Markdown della nota (la stessa di condivisione ed esportazione su file), senza la riga o il blocco da cui nasce il titolo, anche se formattato o troncato; letto riga per riga: riga vuota → spazio di 8 punti; `# ` 18 punti, `## ` 15 punti, `### ` 13 punti, tutti in grassetto; `- [ ] `, `- [x] `, `- [X] ` → cerchio di 12 punti, pieno color ambra e testo grigio barrato se completato; `- ` o `* ` → punto elenco; ogni altra riga → paragrafo 11 punti. Un segno vuoto conserva il suo aspetto (una voce di checklist o di elenco vuota mostra il cerchio o il punto, un'intestazione vuota resta un'intestazione). Il rientro delle voci di elenco e di checklist sposta la voce a destra. La formattazione in linea non viene applicata: i segni di grassetto, corsivo e barrato, le citazioni, i divisori, le immagini e le tabelle compaiono come testo Markdown.
+- Se la scrittura del file non riesce: messaggio «Nota non esportata: impossibile scrivere il file nella posizione scelta.»; nessun file esportato, dati della nota invariati.
 
 ## vault-file
 - Nome del file: titolo con `\ / : * ? " < > | { } [ ]` sostituiti da `_`, spazi consecutivi ridotti a uno, spazi agli estremi rimossi; oltre 50 caratteri si tengono i primi 50 (ripuliti dagli spazi finali); se il risultato è vuoto `nota_<primi 8 caratteri dell'id>.md`, altrimenti `<nome>.md`.

@@ -114,7 +114,7 @@ jobs:
   macos:
     name: macOS universal
     needs: [version, check]
-    runs-on: macos-latest
+    runs-on: macos-26
     env:
       VERSION: ${{ needs.version.outputs.version }}
       FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
@@ -122,6 +122,17 @@ jobs:
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Select Xcode 26 or later
+        run: |
+          app=$(ls -d /Applications/Xcode_*.app | sort -V | tail -n 1)
+          sudo xcode-select -s "$app"
+          major=$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')
+          if (( major < 26 )); then
+            echo "::error::Xcode 26 or later is required, got $major" >&2
+            exit 1
+          fi
+          xcodebuild -version
 
       - uses: subosito/flutter-action@v2
         with:
@@ -227,7 +238,7 @@ jobs:
           appdir=AppDir
           mkdir -p "$appdir/usr/bin"
           cp -R "$bundle/." "$appdir/usr/bin/"
-          cp assets/icon/OpenNotes-square.png "$appdir/open_notes.png"
+          cp assets/icon/OpenNotes-desktop.png "$appdir/open_notes.png"
           cat > "$appdir/open_notes.desktop" <<'EOF'
           [Desktop Entry]
           Type=Application

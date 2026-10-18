@@ -17,4 +17,5 @@ Nessuna esportazione in corso.
 
 ### Choosing destination
 La finestra di salvataggio del sistema è aperta e l'utente sceglie dove salvare il file.
-- `operating-system.FILE_SAVE_DIALOG_CLOSED` → Idle: se l'utente ha scelto una posizione il file viene scritto lì e l'app mostra un breve messaggio con il nome del file esportato; se ha annullato non succede nulla.
+- `operating-system.FILE_SAVE_DIALOG_CLOSED` → Idle: se l'utente ha scelto una posizione e il file viene scritto lì, l'app mostra un breve messaggio con il nome del file esportato; se ha annullato non succede nulla.
+- `operating-system.FILE_SAVE_DIALOG_CLOSED` → Idle: se l'utente ha scelto una posizione ma la scrittura del file non riesce (cartella di sola lettura, disco pieno, percorso non raggiungibile), l'app mostra il messaggio «Nota non esportata: impossibile scrivere il file nella posizione scelta.»; nessun file viene esportato e i dati della nota non cambiano.

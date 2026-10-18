@@ -94,8 +94,9 @@ set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
-# Square app icon, read by the GTK window at startup (see my_application.cc).
-install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon/OpenNotes-square.png"
+# Desktop app icon (Apple macOS icon shape), read by the GTK window at startup
+# (see my_application.cc) and installed as the window icon of the bundle.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../assets/icon/OpenNotes-desktop.png"
   DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/icon" COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

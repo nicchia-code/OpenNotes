@@ -21,7 +21,7 @@ description: Serve quando si ricavano titolo, anteprima o tag di una nota, quand
   - se non resta testo: "Nessun testo aggiuntivo", anche per un documento a blocchi senza testo.
 - Tag: `#` seguito da uno o più caratteri tra lettere e cifre di qualunque alfabeto, `_` e `-`, preceduto da inizio testo, spazio o una tra `(`, `[`, `{`; convertiti in minuscolo, senza duplicati, ordinati alfabeticamente. Nei documenti a blocchi si cercano nel testo di ogni blocco e nelle celle delle tabelle.
 - Creazione con filtro per tag attivo: i tag selezionati, ciascuno preceduto da `#` e separati da uno spazio, vengono scritti in testa al contenuto seguiti da una riga vuota (o da un a capo se c'è già contenuto che non li contiene).
-- Cartella di destinazione alla creazione: la cartella selezionata; la cartella `notes` ("Note") se la selezione è Tutte le note, Note rapide o nessuna. Nel Cestino non si crea una nota: il pulsante non c'è.
+- Cartella di destinazione alla creazione: la cartella selezionata; la cartella `notes` ("Note") se la selezione è Tutte le note o nessuna. Nel Cestino non si crea una nota: il pulsante non c'è.
 - Duplicazione:
   - consentita solo per note fuori dal cestino;
   - titolo della copia: titolo dell'originale seguito da " (copia)", senza troncamento;
@@ -32,7 +32,7 @@ description: Serve quando si ricavano titolo, anteprima o tag di una nota, quand
 - Ordinamento degli elenchi: prima le note fissate, poi per data di modifica decrescente.
 - Le modifiche al contenuto vengono salvate dopo 400 ms senza ulteriori modifiche, con un unico timer condiviso da tutte le note; quando l'app va in secondo piano o si chiude, e prima di fissare, proteggere o togliere la protezione, spostare nel cestino, ripristinare o spostare una nota, la scrittura in attesa parte subito.
 - Note di benvenuto: create all'avvio solo se sul dispositivo non esiste nessuna nota fuori dal cestino, senza attendere la sincronizzazione; sono "Benvenuto in OpenNotes" (fissata) e "Pianificazione & Attività", nella cartella "Note". Finché non sono mai state sincronizzate i loro salvataggi non entrano in coda. Durante la sincronizzazione, una nota mai sincronizzata con uno di questi due titoli esatti viene eliminata dal dispositivo se il cloud contiene già delle note non eliminate.
-- Protezione di una nota: richiede un PIN principale, che l'utente imposta al momento se manca; togliere la protezione, duplicare ed eliminare definitivamente una nota protetta richiedono il PIN corretto; spostarla nel cestino, ripristinarla, spostarla e fissarla no.
+- Protezione di una nota: richiede un PIN principale, che l'utente imposta al momento se manca; togliere la protezione e duplicare una nota protetta richiedono il PIN corretto; eliminarla definitivamente lo richiede solo se non è già sbloccata per la sessione; spostarla nel cestino, ripristinarla, spostarla e fissarla no.
 
 ## note/In trash
 - Spostare nel cestino imposta il flag di cestino e la data di eliminazione e conserva cartella di origine, fissaggio e protezione.

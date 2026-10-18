@@ -1,6 +1,6 @@
 # Operating System
 
-Il sistema operativo del dispositivo: avvia l'app, la avvisa quando lascia il primo piano e quando torna visibile, segnala quando la rete va e viene, comunica lo spazio disponibile per la finestra e gestisce le finestre di sistema per condividere, salvare e stampare.
+Il sistema operativo del dispositivo: avvia l'app, la avvisa quando lascia il primo piano e quando torna visibile, segnala quando la rete va e viene, comunica lo spazio disponibile per la finestra e gestisce le finestre di sistema per condividere e salvare.
 
 ## Events
 
@@ -23,10 +23,7 @@ Il sistema segnala che il dispositivo non ha nessuna connessione di rete, anche 
 Il foglio di condivisione del sistema si chiude, dopo la condivisione o l'annullamento.
 
 ### FILE_SAVE_DIALOG_CLOSED
-La finestra di salvataggio del sistema si chiude, con una posizione scelta (e il file scritto) oppure annullata.
-
-### PRINT_DIALOG_CLOSED
-La finestra di stampa del sistema si chiude, dopo stampa, salvataggio o annullamento.
+La finestra di salvataggio del sistema si chiude, con una posizione scelta (e il file scritto, oppure la scrittura non riuscita) oppure annullata.
 
 ### WINDOW_RESIZED
 Cambia la larghezza disponibile per l'app (finestra ridimensionata, schermo ruotato).

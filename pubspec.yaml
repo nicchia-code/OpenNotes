@@ -46,8 +46,6 @@ dependencies:
   intl: ^0.20.3
   supabase_flutter: ^2.17.2
   share_plus: ^13.3.0
-  pdf: ^3.12.0
-  printing: ^5.14.3
   file_picker: ^12.2.0
   crypto: ^3.0.7
   shared_preferences: ^2.5.5
@@ -78,13 +76,6 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
-
-  # Fonts embedded in PDF exports so every character of a note is drawn.
-  assets:
-    - assets/fonts/DejaVuSans.ttf
-    - assets/fonts/DejaVuSans-Bold.ttf
-    - assets/fonts/NotoColorEmoji.ttf
-    - assets/fonts/LICENSES.txt
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -127,12 +118,9 @@ flutter_launcher_icons:
   image_path: "assets/icon/OpenNotes-full-bleed.png"
   adaptive_icon_background: "assets/icon/OpenNotes-full-bleed.png"
   adaptive_icon_foreground: "assets/icon/OpenNotes-full-bleed.png"
-  macos:
-    generate: true
-    image_path: "assets/icon/OpenNotes-square.png"
   windows:
     generate: true
-    image_path: "assets/icon/OpenNotes-square.png"
+    image_path: "assets/icon/OpenNotes-desktop.png"
   web:
     generate: true
     image_path: "assets/icon/OpenNotes-square.png"

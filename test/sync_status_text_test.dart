@@ -93,6 +93,45 @@ void main() {
     });
   });
 
+  group('isCloudRejection', () {
+    bool refused(String code) => isCloudRejection(PostgrestException(message: 'answer', code: code));
+
+    test('counts a 4xx answer other than 401, 408 and 429', () {
+      expect(refused('400'), isTrue);
+      expect(refused('403'), isTrue);
+      expect(refused('409'), isTrue);
+      expect(refused('401'), isFalse);
+      expect(refused('408'), isFalse);
+      expect(refused('429'), isFalse);
+      expect(refused('503'), isFalse);
+    });
+
+    test('counts constraint, invalid data and permission database errors', () {
+      expect(refused('23505'), isTrue);
+      expect(refused('23503'), isTrue);
+      expect(refused('22P02'), isTrue);
+      expect(refused('42501'), isTrue);
+    });
+
+    test('does not count transient database errors, connection or cloud failures', () {
+      expect(refused('40001'), isFalse);
+      expect(refused('40P01'), isFalse);
+      expect(refused('55P03'), isFalse);
+      expect(refused('54000'), isFalse);
+      expect(refused('08006'), isFalse);
+      expect(refused('53300'), isFalse);
+      expect(refused('57014'), isFalse);
+      expect(refused('58030'), isFalse);
+      expect(refused('XX000'), isFalse);
+      expect(refused('PGRST301'), isFalse);
+    });
+
+    test('an error without a code is not a refusal', () {
+      expect(isCloudRejection(const PostgrestException(message: 'no code')), isFalse);
+      expect(isCloudRejection(StateError('bad')), isFalse);
+    });
+  });
+
   group('SyncTriggers.isOffline', () {
     test('is false until connectivity is reported, then follows it', () async {
       final connectivity = StreamController<List<ConnectivityResult>>();

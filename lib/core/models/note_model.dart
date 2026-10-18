@@ -125,8 +125,11 @@ class Note {
     return -1;
   }
 
+  static String _titleText(String line) =>
+      line.trim().replaceFirst(RegExp(r'^#+\s*'), '').trim();
+
   static String _clipTitle(String line) {
-    final firstLine = line.trim().replaceFirst(RegExp(r'^#+\s*'), '').trim();
+    final firstLine = _titleText(line);
     final runes = firstLine.runes;
     return runes.length > 60
         ? String.fromCharCodes(runes.take(60)).trim()
@@ -430,7 +433,7 @@ class Note {
               final line = rawLines[li];
               final style = parsedLineStyles[li];
               if (style == 'title' && !line.startsWith('#')) {
-                formattedLines.add(line.isEmpty ? '' : '# $line');
+                formattedLines.add('# $line');
               } else if (style == 'h1' && !line.startsWith('#')) {
                 formattedLines.add('# $line');
               } else if (style == 'h2' && !line.startsWith('#')) {
@@ -466,11 +469,31 @@ class Note {
     }
   }
 
-  /// Markdown of the body without the block or line the title comes from,
-  /// so the title is never printed twice, whatever its clipping or styling.
+  /// Markdown of the body without the title line, so the title is never printed
+  /// twice. A title clipped to 60 characters keeps its whole first line in the body,
+  /// so no character beyond the clipping is lost.
   String toMarkdownBody() {
+    final markdown = _titleIsClipped() ? toMarkdown() : _markdownWithoutTitle();
     // A leading blank line here would become a second blank line after the title.
-    return _markdownWithoutTitle().replaceFirst(RegExp(r'^(?:[ \t]*\n)+'), '');
+    return markdown.replaceFirst(RegExp(r'^(?:[ \t]*\n)+'), '');
+  }
+
+  /// Whether the title comes from a first line longer than the 60-character title.
+  bool _titleIsClipped() {
+    final blocks = readBlocks();
+    String? line;
+    if (blocks == null) {
+      final lines = content.split('\n');
+      final index = _titleLineIndex(lines);
+      if (index >= 0) line = lines[index];
+    } else {
+      final index = _titleBlockIndex(blocks);
+      if (index >= 0) {
+        final lines = _blockLines(blocks[index] as Map<String, dynamic>);
+        line = lines[_titleLineIndex(lines)];
+      }
+    }
+    return line != null && _titleText(line).runes.length > 60;
   }
 
   String _markdownWithoutTitle() {

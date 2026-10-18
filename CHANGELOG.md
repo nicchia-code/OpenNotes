@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0 - 2026-10-18
+- Removed the PDF export of a note: the app no longer builds, bundles, or ships the PDF fonts, and the `pdf` and `printing` dependencies are gone. Sharing and Markdown export are unchanged.
+- Changed the macOS app icon: it is a single full-bleed layer in an Icon Composer file, so macOS 26 and later show it without the grey tile, and the macOS CI job builds with Xcode 26 on a macOS 26 runner.
+
 ## 0.2.2 - 2026-10-17
 - Fixed the desktop window: on macOS the window appears at launch, centered at 1280 × 760 without the system title bar, and on Linux, Windows, and macOS it appears only after the first frame of the interface is drawn, never empty or transparent.
 

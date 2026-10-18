@@ -336,12 +336,16 @@ class DatabaseService {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
-  Future<List<Tag>> getAllTags() async {
+  /// The tag list of the notes outside the trash: each note's stored tags plus the #tags written in its content, counted
+  /// once per note. A protected note still locked keeps its text hidden, so only its stored tags count.
+  Future<List<Tag>> getAllTags({bool Function(String noteId)? isUnlocked}) async {
     final results = await db.query('notes', where: 'is_deleted = 0');
     final tagCountMap = <String, int>{};
 
     for (final note in results.map(Note.fromMap)) {
-      for (final cleanTag in note.storedTags) {
+      final hidden = note.isLocked && !(isUnlocked?.call(note.id) ?? false);
+      final noteTags = {...note.storedTags, if (!hidden) ...Note.extractTagsFromContent(note.content)};
+      for (final cleanTag in noteTags) {
         tagCountMap[cleanTag] = (tagCountMap[cleanTag] ?? 0) + 1;
       }
     }
@@ -437,11 +441,13 @@ class DatabaseService {
 
   /// Removes the queued deletes of notes this device had synced and then removed for good: their rows are gone. Only a
   /// note the cloud has seen has a base revision, which tells them apart from notes never synced (their deletes stay).
-  Future<void> removeQueuedDeletesOfPurgedSyncedNotes() async {
-    await db.rawDelete(
-      "DELETE FROM sync_queue WHERE entity_type = 'note' AND action = 'delete' "
-      'AND base_revision IS NOT NULL AND entity_id NOT IN (SELECT id FROM notes)',
-    );
+  /// Returns the ids of the notes whose queued delete was removed.
+  Future<List<String>> removeQueuedDeletesOfPurgedSyncedNotes() async {
+    const where = "entity_type = 'note' AND action = 'delete' "
+        'AND base_revision IS NOT NULL AND entity_id NOT IN (SELECT id FROM notes)';
+    final rows = await db.rawQuery('SELECT entity_id FROM sync_queue WHERE $where');
+    await db.rawDelete('DELETE FROM sync_queue WHERE $where');
+    return [for (final row in rows) row['entity_id'] as String];
   }
 
   /// When the queued delete of this entity was made; null when no delete waits to be sent.

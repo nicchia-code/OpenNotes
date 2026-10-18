@@ -64,8 +64,10 @@ Non ci sono modifiche in attesa di essere consegnate.
 
 #### Save pending
 Ci sono modifiche di testo non ancora consegnate. Ogni nuova modifica di testo fa ripartire l'attesa.
-- `sync-run.CLOUD_NOTE_APPLIED` → Save pending: se riguarda la nota aperta, la versione remota non viene caricata: la modifica in attesa, più recente, la sostituirà con il prossimo salvataggio, secondo la regola per cui vince l'ultima modifica.
+- `sync-run.CLOUD_NOTE_APPLIED` → Save pending: se riguarda la nota aperta e la versione del cloud non è protetta, la versione remota non viene caricata: la modifica in attesa, più recente, la sostituirà con il prossimo salvataggio, secondo la regola per cui vince l'ultima modifica.
 - `realtime-channel.CLOUD_NOTE_APPLIED` → Save pending: alle stesse condizioni e con lo stesso effetto della sincronizzazione.
+- `sync-run.CLOUD_NOTE_APPLIED` → Idle: se la versione del cloud applicata è protetta, anche se riguarda un'altra nota. Prima che la nota venga nascosta consegna subito per il salvataggio l'intero documento, senza aspettare la fine dell'attesa; la versione remota non viene caricata, perché quella consegnata è in attesa di essere scritta.
+- `realtime-channel.CLOUD_NOTE_APPLIED` → Idle: alle stesse condizioni e con lo stesso effetto della sincronizzazione.
 - `time.EDITOR_SAVE_DEBOUNCE_ELAPSED` → Idle: consegna per il salvataggio l'intero documento.
 - `operating-system.APP_LEAVING_FOREGROUND` → Idle: consegna subito per il salvataggio l'intero documento, senza aspettare la fine dell'attesa.
 - `user.PIN_NOTE` → Idle: prima che il comando agisca, anche su un'altra nota, consegna subito per il salvataggio l'intero documento, senza aspettare la fine dell'attesa.
@@ -81,4 +83,4 @@ Ci sono modifiche di testo non ancora consegnate. Ogni nuova modifica di testo f
 ## Events
 
 ### CONTENT_CHANGED
-Emesso quando l'editor trasforma l'intero documento della nota aperta in contenuto salvabile e lo consegna per il salvataggio. Succede subito dopo i comandi di formattazione, stile, checklist, tabelle, immagini, unione di sezioni, tag e menu rapido, dopo una pausa nelle modifiche di testo, oppure subito quando l'app lascia il primo piano o sta per partire un comando sulla nota (fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare, spostare in un'altra cartella, duplicare) con modifiche di testo non ancora consegnate. Succede anche quando la nota è protetta e i comandi agiscono sul documento nascosto.
+Emesso quando l'editor trasforma l'intero documento della nota aperta in contenuto salvabile e lo consegna per il salvataggio. Succede subito dopo i comandi di formattazione, stile, checklist, tabelle, immagini, unione di sezioni, tag e menu rapido, dopo una pausa nelle modifiche di testo, oppure subito quando l'app lascia il primo piano, sta per partire un comando sulla nota (fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare, spostare in un'altra cartella, duplicare) o viene applicata una versione del cloud protetta, con modifiche di testo non ancora consegnate. Succede anche quando la nota è protetta e i comandi agiscono sul documento nascosto.

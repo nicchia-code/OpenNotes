@@ -165,6 +165,9 @@ void main() {
       payload: jsonEncode({'id': purgedUnsynced.id}),
     );
     await dbService.deleteNoteRow(purgedUnsynced.id);
+    final events = <RemoteChange>[];
+    final subscription = syncService.remoteChanges.listen(events.add);
+    addTearDown(subscription.cancel);
 
     await waitUntil(() => !syncService.isSyncing);
     await syncService.syncNow();
@@ -175,6 +178,12 @@ void main() {
     expect(pending.where((a) => a['entity_id'] == 'old-synced-1'), isEmpty);
     expect(pending.where((a) => a['entity_id'] == 'purged-synced-1'), isEmpty);
     expect((await dbService.getFolders()).map((f) => f.id), contains('offline-folder-1'));
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      events.whereType<PreviousAccountNoteRemoved>().map((e) => e.noteId),
+      unorderedEquals(['old-synced-1', 'purged-synced-1']),
+      reason: 'PREVIOUS_ACCOUNT_NOTE_REMOVED for each synced note removed for good, and for each queued delete of one',
+    );
     expect(folderUpserts.map((f) => f['id']), ['offline-folder-1']);
     expect(pending.where((a) => a['entity_type'] == 'folder'), isEmpty);
   });

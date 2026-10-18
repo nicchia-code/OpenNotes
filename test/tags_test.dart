@@ -231,13 +231,13 @@ This project uses #dart and #flutter for cross-platform desktop.
       expect(notes.map((n) => n.id), ['saved']);
     });
 
-    test('tag list counts saved tags only, matching the filter', () async {
+    test('tag list counts stored tags and hashtags written in content, while the filter uses stored tags only', () async {
       final service = await openWith([
         {'id': 'saved', 'title': 'Saved', 'content': '#lavoro', 'tags': '["lavoro"]'},
         {'id': 'stale', 'title': 'Stale', 'content': 'Ho scritto #lavoro', 'tags': '[]'},
       ]);
       final tags = await service.getAllTags();
-      expect(tags.map((t) => (t.name, t.count)), [('lavoro', 1)]);
+      expect(tags.map((t) => (t.name, t.count)), [('lavoro', 2)]);
       expect((await service.getNotes(tag: 'lavoro')).map((n) => n.id), ['saved']);
     });
 
@@ -302,6 +302,18 @@ This project uses #dart and #flutter for cross-platform desktop.
       expect(
         (await service.getNotes(searchQuery: 'segreta', isUnlocked: (id) => id == 'secret')).map((n) => n.id),
         unorderedEquals(['secret', 'open']),
+      );
+    });
+
+    test('tag list counts hidden #tags of locked notes only once unlocked', () async {
+      final service = await openWith([
+        {'id': 'secret', 'title': 'Diario', 'content': 'testo #segreto', 'tags': '["privato"]', 'is_locked': 1},
+        {'id': 'open', 'title': 'Aperta', 'content': '#aperto', 'tags': '[]'},
+      ]);
+      expect((await service.getAllTags()).map((t) => t.name), ['aperto', 'privato']);
+      expect(
+        (await service.getAllTags(isUnlocked: (id) => id == 'secret')).map((t) => t.name),
+        ['aperto', 'privato', 'segreto'],
       );
     });
 

@@ -1081,8 +1081,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   void indent() {
     final block = _currentActiveBlock;
     if (block?.controller != null) {
+      final textBefore = block!.controller?.text;
       block!.controller!.handleTabKey(outdent: false);
-      _refreshSuggestionsAfterKeyEdit(block, _blocks.indexOf(block));
+      _refreshSuggestionsAfterTab(block, _blocks.indexOf(block), textBefore);
       _serializeAndSave(immediate: false);
     }
   }
@@ -1091,8 +1092,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
   void outdent() {
     final block = _currentActiveBlock;
     if (block?.controller != null) {
-      block!.controller!.handleTabKey(outdent: true);
-      _refreshSuggestionsAfterKeyEdit(block, _blocks.indexOf(block));
+      final textBefore = block!.controller?.text;
+      block.controller!.handleTabKey(outdent: true);
+      _refreshSuggestionsAfterTab(block, _blocks.indexOf(block), textBefore);
       _serializeAndSave(immediate: false);
     }
   }
@@ -1118,9 +1120,9 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
 
     setState(() {
       _blocks.insert(insertPos, newBlock);
-      // Ensure there's an editable paragraph after the table
+      // Ensure there's an editable text part after the table
       if (insertPos + 1 >= _blocks.length ||
-          _blocks[insertPos + 1].type != BlockType.paragraph) {
+          !_isTextPart(_blocks[insertPos + 1])) {
         _blocks.insert(
           insertPos + 1,
           NoteBlock(id: _uuid.v4(), type: BlockType.paragraph, text: ''),
@@ -1250,11 +1252,10 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTap: () {
-                    // Clicking blank canvas focuses the last block or appends a new one
+                    // Clicking blank canvas focuses the last part when it is an empty text section, or appends a new one
                     if (_blocks.isNotEmpty) {
                       final last = _blocks.last;
-                      if (last.type == BlockType.paragraph &&
-                          last.text.isEmpty) {
+                      if (_isTextPart(last) && last.text.isEmpty) {
                         last.focusNode?.requestFocus();
                       } else {
                         final newBlock = NoteBlock(
@@ -1848,6 +1849,17 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     _refreshSuggestions(val, block, index);
   }
 
+  /// Tab and Shift+Tab refresh the menus only when they change the text of the section;
+  /// a key that leaves the text as it is keeps the menus and the tag suggestions as they are.
+  void _refreshSuggestionsAfterTab(
+    NoteBlock block,
+    int index,
+    String? textBefore,
+  ) {
+    if (block.controller?.text == textBefore) return;
+    _refreshSuggestionsAfterKeyEdit(block, index);
+  }
+
   void _refreshSuggestions(String val, NoteBlock block, int index) {
     final sel = block.controller?.selection;
     final pos = (sel != null && sel.isValid) ? sel.start : val.length;
@@ -2186,7 +2198,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     });
   }
 
-  /// Removes the slash command from the caret line: the '/' and the letters and digits of any alphabet, then the spaces after it.
+  /// Removes the slash command from the caret line: the '/' and the tag-name characters (letters, combining marks, digits, '_' and '-') of any alphabet, then the spaces after it.
   void _removeSlashCommand(NoteBlock block) {
     final ctrl = block.controller;
     if (ctrl == null) return;
@@ -2200,7 +2212,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       var lStr = lines[lineIdx];
       if (lStr.startsWith('/')) {
         lStr = lStr.replaceFirst(
-          RegExp(r'^/[\p{L}\p{N}]*\s*', unicode: true),
+          RegExp('^/' + Note.tagNameChar + r'*\s*', unicode: true),
           '',
         );
       }
@@ -2288,9 +2300,10 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     // TAB and SHIFT+TAB keys (Notion-style indent / outdent)
     if (event.logicalKey == LogicalKeyboardKey.tab) {
       final isShift = HardwareKeyboard.instance.isShiftPressed;
+      final textBefore = block.controller?.text;
       if (block.controller != null &&
           block.controller!.handleTabKey(outdent: isShift)) {
-        _refreshSuggestionsAfterKeyEdit(block, index);
+        _refreshSuggestionsAfterTab(block, index, textBefore);
         _serializeAndSave(immediate: false);
         return KeyEventResult.handled;
       }

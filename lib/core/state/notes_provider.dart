@@ -59,7 +59,7 @@ class NotesProvider extends ChangeNotifier {
        _syncService = syncService,
        _securityService = securityService {
     _syncService.addListener(_onSyncChanged);
-    _securityService?.addListener(refreshNotes);
+    _securityService?.addListener(_onSecurityChanged);
     _remoteSubscription = _syncService.remoteChanges.listen((change) {
       if (_disposed) return;
       // A cloud version that protects a note hides it: the edit still waiting is handed over first, then
@@ -76,6 +76,13 @@ class NotesProvider extends ChangeNotifier {
   void _onSyncChanged() {
     if (_disposed) return;
     if (!_syncService.isSyncing) _reloadLists();
+  }
+
+  /// Session unlocks change which tags are visible: the tag list is reloaded with the notes.
+  void _onSecurityChanged() {
+    if (_disposed) return;
+    unawaited(refreshTags());
+    refreshNotes();
   }
 
   /// Reloads folders, tags and notes in this order: notes read the folder selection that the
@@ -153,7 +160,7 @@ class NotesProvider extends ChangeNotifier {
 
   /// Refreshes tag list from database
   Future<void> refreshTags() async {
-    _tags = await _dbService.getAllTags();
+    _tags = await _dbService.getAllTags(isUnlocked: _securityService?.isNoteUnlocked);
     notifyListeners();
   }
 
@@ -291,6 +298,13 @@ class NotesProvider extends ChangeNotifier {
       _selectedFolderId.isNotEmpty &&
       !_folders.any((f) => f.id == _selectedFolderId);
 
+  /// Folder of a duplicate: the original's folder, or Notes when that folder no longer exists.
+  Future<String> _folderIdForCopy(String originalFolderId) async {
+    if (originalFolderId == Folder.defaultNotesId) return originalFolderId;
+    final folder = await _dbService.getFolderById(originalFolderId);
+    return folder != null ? originalFolderId : Folder.defaultNotesId;
+  }
+
   /// Creates a new Note in the current folder (or default notes folder)
   /// If creating inside a tag view (or multiple tags), appends those tags at the top of the note.
   Future<Note?> createNote({
@@ -300,11 +314,12 @@ class NotesProvider extends ChangeNotifier {
     const uuid = Uuid();
     final now = DateTime.now();
 
+    final folderGone = _isSelectedFolderGone;
     String targetFolderId = _selectedFolderId;
     if (targetFolderId == Folder.allNotesId ||
         targetFolderId == Folder.trashId ||
         targetFolderId.isEmpty ||
-        _isSelectedFolderGone) {
+        folderGone) {
       targetFolderId = Folder.defaultNotesId;
     }
 
@@ -340,7 +355,12 @@ class NotesProvider extends ChangeNotifier {
     await _syncService.notifyNoteChanged(saved);
 
     // A new note must be visible in the list it is selected in: drop the search.
+    // When the open folder is gone, the view moves to Notes, where the new note lives.
     _searchQuery = '';
+    if (folderGone) {
+      _selectedFolderId = Folder.defaultNotesId;
+      _selectedFolderName = null;
+    }
     _selectedNoteId = newNote.id;
     await refreshNotes();
     await refreshTags();
@@ -412,8 +432,10 @@ class NotesProvider extends ChangeNotifier {
       return true;
     } catch (error) {
       debugPrint('Note content save failed: $error');
+      final discarded = _pendingContent != null;
       _pendingContent ??= pending;
       _setContentSaveFailed(true);
+      if (discarded) await _restoreStoredContent(pending);
       return false;
     } finally {
       _writingContents.remove(pending);
@@ -444,6 +466,17 @@ class NotesProvider extends ChangeNotifier {
       final index = _notes.indexWhere((n) => n.id == waiting.noteId);
       if (index != -1) _notes[index] = _withContent(_notes[index], waiting);
     }
+  }
+
+  /// Puts back the stored version of the note whose waiting version was discarded, then
+  /// shows again the versions still waiting.
+  Future<void> _restoreStoredContent(_PendingContentSave discarded) async {
+    _writingContents.remove(discarded);
+    final stored = await _dbService.getNoteById(discarded.noteId);
+    final index = _notes.indexWhere((n) => n.id == discarded.noteId);
+    if (stored != null && index != -1) _notes[index] = stored;
+    _showWaitingContent();
+    notifyListeners();
   }
 
   void _setContentSaveFailed(bool failed) {
@@ -527,6 +560,7 @@ class NotesProvider extends ChangeNotifier {
     await _dbService.upsertNote(savedLock);
     await _syncService.notifyNoteChanged(savedLock);
     await refreshNotes();
+    await refreshTags();
     return true;
   }
 
@@ -640,7 +674,7 @@ class NotesProvider extends ChangeNotifier {
       id: uuid.v4(),
       title: copyTitle,
       content: content,
-      folderId: _isSelectedFolderGone ? Folder.defaultNotesId : note.folderId,
+      folderId: await _folderIdForCopy(note.folderId),
       tags: List<String>.from(note.tags),
       isLocked: note.isLocked,
       createdAt: now,
@@ -769,7 +803,7 @@ class NotesProvider extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _syncService.removeListener(_onSyncChanged);
-    _securityService?.removeListener(refreshNotes);
+    _securityService?.removeListener(_onSecurityChanged);
     _remoteSubscription?.cancel();
     _actionFailures.close();
     // Write the waiting version now: cancelling the wait would drop it.

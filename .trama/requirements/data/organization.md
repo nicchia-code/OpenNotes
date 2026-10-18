@@ -11,7 +11,7 @@ description: Serve quando si leggono o scrivono cartelle, tag, viste dell'elenco
 
 ## note-browser
 - Tag: nome normalizzato e numero di note non nel cestino che lo usano. Non è memorizzato: si ricava a ogni lettura dai tag memorizzati delle note e dai `#tag` presenti nel loro contenuto. Due tag sono uguali a prescindere da maiuscole e minuscole.
-- Viste che non sono cartelle memorizzate: "Tutte le note" (`system_all`), "Eliminati di recente" (`system_trash`), "Note rapide" (`system_quick_notes`, mai mostrata).
+- Viste che non sono cartelle memorizzate: "Tutte le note" (`system_all`), "Eliminati di recente" (`system_trash`).
 - Stato della vista, solo in memoria: vista selezionata (all'avvio `system_all`), insieme dei tag selezionati (normalizzati), testo di ricerca, elenco cartelle, elenco tag, conteggio per "Tutte le note", per "Note" e per ogni cartella, numero di note nel cestino.
 
 ## note-selection

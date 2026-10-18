@@ -166,6 +166,34 @@ void main() {
     expect(await dbService.getFolderById('gone-folder'), isNull);
   });
 
+  test('a system folder deleted in the cloud stays with its notes, which keep their folder', () async {
+    final created = DateTime.utc(2026, 10, 1, 9);
+    await dbService.upsertFolder(Folder(
+      id: 'system-folder',
+      name: 'Sistema',
+      isSystem: true,
+      createdAt: created,
+      updatedAt: created,
+    ));
+    await dbService.upsertNote(
+      Note(id: 'system-note', title: 'Nota', content: '', folderId: 'system-folder', createdAt: created, updatedAt: created)
+          .copyWith(syncedAt: created),
+    );
+
+    await syncService.handleRemoteFolderChange(_update('folders', {
+      'id': 'system-folder',
+      'user_id': _userId,
+      'name': 'Sistema',
+      'is_system': true,
+      'created_at': '2026-10-01T09:00:00.000Z',
+      'updated_at': '2026-10-02T09:00:00.000Z',
+      'purged_at': '2026-10-02T09:00:00.000Z',
+    }));
+
+    expect((await dbService.getFolderById('system-folder'))?.isSystem, isTrue);
+    expect((await dbService.getNoteById('system-note'))?.folderId, 'system-folder');
+  });
+
   test('a queued edit newer than the cloud copy keeps the local copy, and the edit still waits to be sent', () async {
     final edited = DateTime.utc(2026, 10, 3, 9);
     await dbService.upsertNote(

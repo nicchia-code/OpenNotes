@@ -8,6 +8,6 @@ description: Use when storing or reading the master PIN or the lock flag and ses
 - La presenza della chiave equivale a "PIN impostato"; non esiste un'entità PIN nel database locale, nel vault o su Supabase.
 
 ## note-access
-- Il lucchetto è un attributo booleano della nota (predefinito: falso): intero 0/1 `is_locked` nel database locale, `locked` nel front matter del file Markdown del vault (in lettura è accettato anche `is_locked`), booleano `is_locked` nella tabella delle note su Supabase.
+- Il lucchetto è un attributo booleano della nota (predefinito: falso): intero 0/1 `is_locked` nel database locale, `locked` nel front matter del file Markdown del vault (solo scritto: l'app non rilegge il vault), booleano `is_locked` nella tabella delle note su Supabase.
 - Gli sblocchi di sessione sono solo un insieme in memoria di identificativi di note, mai salvato.
 - L'anteprima memorizzata di una nota protetta è il testo fisso "Questa nota è protetta"; il contenuto della nota protetta resta salvato per intero, non cifrato.

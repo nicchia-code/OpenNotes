@@ -25,10 +25,10 @@ L'app segnala che una sincronizzazione è in corso. Ogni riga inviata al cloud v
 - `FAILED` → Offline: se il sistema segnala che la rete manca; il controllo completo eventualmente in corso o richiesto viene ricordato per il ritorno della rete.
 
 #### Pushing changes (initial)
-Prima confronta l'utente connesso con l'ultimo che ha sincronizzato il dispositivo: se è un altro utente, elimina definitivamente dal dispositivo le note già sincronizzate, cestinate e protette comprese, insieme al loro file nel vault e senza accodare nulla, e scarta i loro cambiamenti ancora in attesa, comprese le cancellazioni in coda di note già sincronizzate che l'utente aveva eliminato definitivamente prima del cambio; da allora ricorda il nuovo utente; le note mai sincronizzate restano. Se il dispositivo non ricorda nessun utente, ricorda quello connesso senza eliminare nulla. Poi invia al cloud i cambiamenti in coda, dal più vecchio al più recente, saltando quelli messi da parte. Ogni cambiamento porta la revisione del cloud su cui si basa, e il cloud lo accetta solo se nel frattempo quella nota o cartella non è cambiata; quando lo accetta, il dispositivo ricorda la nuova revisione e toglie il cambiamento dalla coda.
+Prima confronta l'utente connesso con l'ultimo che ha sincronizzato il dispositivo: se è un altro utente, elimina definitivamente dal dispositivo le note già sincronizzate, cestinate e protette comprese, insieme al loro file nel vault e senza accodare nulla, e scarta i loro cambiamenti ancora in attesa, comprese le cancellazioni in coda di note già sincronizzate che l'utente aveva eliminato definitivamente prima del cambio; da allora ricorda il nuovo utente; le note mai sincronizzate restano. Se il dispositivo non ricorda nessun utente, ricorda quello connesso senza eliminare nulla. Poi invia al cloud i cambiamenti in coda, dal più vecchio al più recente, saltando quelli messi da parte. Un salvataggio in coda di una nota mai sincronizzata che ora ha esattamente il titolo di una delle due note di benvenuto non viene inviato: viene tolto dalla coda e la nota viene esaminata con le note mai sincronizzate. Ogni cambiamento porta la revisione del cloud su cui si basa, e il cloud lo accetta solo se nel frattempo quella nota o cartella non è cambiata; quando lo accetta, il dispositivo ricorda la nuova revisione e toglie il cambiamento dalla coda.
 - salvataggio di una nota: prima carica le immagini e i disegni della nota che il cloud non ha ancora; un caricamento non riuscito viene annotato nel registro e ritentato al giro successivo, senza fermare l'invio della nota. Se la nota del cloud è cambiata nel frattempo vince l'ultima modifica: se la copia locale è stata modificata strettamente dopo quella del cloud viene inviata sopra di essa, altrimenti il salvataggio viene scartato e la versione del cloud arriva con il download. Se il cloud ha la nota come eliminata definitivamente: se l'eliminazione è successiva all'ultima modifica locale, il salvataggio viene scartato e la nota viene eliminata dal dispositivo insieme al suo file nel vault; altrimenti la nota rinasce sul cloud con la versione locale;
 - eliminazione definitiva di una nota: il cloud conserva la nota come segnaposto di eliminazione, senza contenuto, con l'ora dell'eliminazione; se la nota del cloud è stata modificata dopo l'eliminazione, l'eliminazione viene scartata e la nota torna sul dispositivo con il download;
-- creazione o rinomina di una cartella: come il salvataggio di una nota, con le stesse regole per i conflitti e per le cartelle eliminate altrove;
+- creazione o rinomina di una cartella: come il salvataggio di una nota, con le stesse regole per i conflitti e per le cartelle eliminate altrove; se il cloud non ha più la cartella, nemmeno come segnaposto di eliminazione, la modifica viene scartata anche se più recente e la cartella viene rimossa dal dispositivo, spostando le sue note nella cartella "Note";
 - eliminazione di una cartella: come l'eliminazione definitiva di una nota; quando il cloud la accetta, le sue sottocartelle diventano di primo livello.
 
 Un cambiamento che il cloud rifiuta (dati non validi, permessi) viene contato come rifiutato e si passa al successivo; un errore di rete, un tempo scaduto o una sessione scaduta fanno fallire il giro.
@@ -71,6 +71,7 @@ Il sistema segnala che il dispositivo non ha rete: nessun tentativo automatico e
 - `operating-system.NETWORK_AVAILABLE` → Running: se un utente è connesso; controllo completo se ne era stato ricordato uno, altrimenti giro incrementale.
 - `operating-system.NETWORK_AVAILABLE` → Idle: se nessun utente è connesso.
 - `supabase.INITIAL_SESSION` → Offline: solo se l'evento porta una sessione; ricorda che al ritorno della rete serve un controllo completo.
+- `supabase.SIGNED_IN` → Offline: solo se l'evento porta una sessione; come per la sessione iniziale non parte alcun giro e ricorda che al ritorno della rete serve un controllo completo.
 - `user.SYNC_NOW` → Running: controllo completo, anche senza rete.
 - `user.PULL_TO_REFRESH` → Running: solo se un utente è connesso; controllo completo, anche senza rete.
 
@@ -80,7 +81,7 @@ Il sistema segnala che il dispositivo non ha rete: nessun tentativo automatico e
 Emesso per ogni cambiamento in coda che il cloud ha accettato.
 
 ### CHANGE_DISCARDED
-Emesso per ogni cambiamento in attesa tolto senza essere inviato perché la versione del cloud vince: un salvataggio di una nota o di una cartella modificata dopo sul cloud o eliminata sul cloud dopo l'ultima modifica locale, un'eliminazione più vecchia dell'ultima modifica sul cloud, oppure una modifica in attesa più vecchia di una versione del cloud applicata durante il download.
+Emesso per ogni cambiamento in attesa tolto senza essere inviato. Perché la versione del cloud vince: un salvataggio di una nota o di una cartella modificata dopo sul cloud o eliminata sul cloud dopo l'ultima modifica locale, un salvataggio di una cartella che il cloud non ha più, nemmeno come segnaposto, anche se più recente, un'eliminazione più vecchia dell'ultima modifica sul cloud, oppure una modifica in attesa più vecchia di una versione del cloud applicata durante il download. Oppure perché è un salvataggio di una nota mai sincronizzata che ha preso esattamente il titolo di una delle due note di benvenuto, il cui destino passa all'invio delle note mai sincronizzate.
 
 ### CHANGE_REJECTED
 Emesso per ogni cambiamento in coda che il cloud rifiuta perché non valido o non permesso; non per errori di rete, tempi scaduti o conflitti.
@@ -107,7 +108,7 @@ Emesso per ogni nota del cloud che crea o sostituisce la copia locale.
 Emesso per ogni nota eliminata definitivamente dal dispositivo perché è stata eliminata altrove dopo la sua ultima modifica locale, scoperto inviando un suo salvataggio o durante il download, oppure perché il controllo completo ha trovato che il cloud non la ha più.
 
 ### CLOUD_FOLDER_REMOVED
-Emesso per ogni cartella eliminata dal dispositivo perché è stata eliminata altrove dopo la sua ultima modifica locale, oppure perché il controllo completo ha trovato che il cloud non la ha più.
+Emesso per ogni cartella eliminata dal dispositivo perché è stata eliminata altrove dopo la sua ultima modifica locale, perché inviando una sua modifica si è trovato che il cloud non la ha più, nemmeno come segnaposto, oppure perché il controllo completo ha trovato che il cloud non la ha più.
 
 ### COMPLETED
 Emesso quando cartelle e note del cloud sono state applicate.

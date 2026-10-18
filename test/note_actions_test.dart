@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:open_notes/core/models/note_model.dart';
+import 'package:open_notes/core/models/folder_model.dart';
 import 'package:open_notes/core/services/database_service.dart';
 import 'package:open_notes/core/services/sync_service.dart';
 import 'package:open_notes/core/services/vault_service.dart';
@@ -375,6 +376,50 @@ void main() {
     await tester.pumpAndSettle();
     expect(result, isFalse);
   });
+  testWidgets('permanent deletion of an unlocked note skips the PIN', (
+    tester,
+  ) async {
+    final security = SecurityService()..unlockNote('unlocked-trash');
+    final note = Note(
+      id: 'unlocked-trash',
+      title: 'Protetta sbloccata nel cestino',
+      content: '',
+      isLocked: true,
+      isDeleted: true,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    bool? result;
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: provider),
+          ChangeNotifierProvider.value(value: security),
+        ],
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () async {
+                  result = await NoteActions.confirmPermanentDelete(
+                    context,
+                    note,
+                  );
+                },
+                child: const Text('Apri'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Apri'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Elimina definitivamente'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sblocca'), findsNothing);
+    expect(result, isTrue);
+  });
 
   test(
     'duplicate preserves content and tags while copying lock state without pinning',
@@ -407,6 +452,49 @@ void main() {
       expect(lavoro.count, 2);
     },
   );
+
+  test('duplicate keeps the original folder even when the open view is gone', () async {
+    final folder = Folder(
+      id: 'lavoro-folder',
+      name: 'Lavoro',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await db.upsertFolder(folder);
+    final note = Note(
+      id: 'in-folder',
+      title: 'Riunione',
+      content: '# Riunione\n\nAppunti',
+      folderId: folder.id,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await db.upsertNote(note);
+    await provider.refreshNotes();
+    provider.selectFolder('missing-view-folder');
+
+    final copy = await provider.duplicateNote(note.id);
+
+    expect(copy, isNotNull);
+    expect(copy!.folderId, folder.id);
+  });
+
+  test('duplicate falls back to Notes only when the original folder is gone', () async {
+    final note = Note(
+      id: 'orphan',
+      title: 'Orfana',
+      content: '# Orfana\n\nTesto',
+      folderId: 'deleted-folder',
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+    await db.upsertNote(note);
+
+    final copy = await provider.duplicateNote(note.id);
+
+    expect(copy, isNotNull);
+    expect(copy!.folderId, Folder.defaultNotesId);
+  });
 
   test('duplicate clears an active search so the copy is listed and selected', () async {
     final note = Note(
@@ -602,7 +690,7 @@ void main() {
     );
     expect(
       NoteActions.savedFileName(Uri.file('/home/u/Documenti/Idee')),
-      isNull,
+      'Idee',
     );
   });
 

@@ -193,9 +193,6 @@ L'utente sceglie "Condividi" dal menu azioni di una nota o preme il pulsante di 
 ### EXPORT_NOTE_AS_MARKDOWN
 L'utente sceglie "Esporta come Markdown (.md)" dal menu azioni di una nota.
 
-### EXPORT_NOTE_AS_PDF
-L'utente chiede di esportare una nota in PDF (oggi nessuna schermata offre questa azione).
-
 ### ENTER_PIN
 L'utente conferma il PIN principale in una richiesta di sblocco; il PIN può essere corretto o sbagliato.
 
