@@ -1082,7 +1082,7 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     final block = _currentActiveBlock;
     if (block?.controller != null) {
       final textBefore = block!.controller?.text;
-      block!.controller!.handleTabKey(outdent: false);
+      block.controller!.handleTabKey(outdent: false);
       _refreshSuggestionsAfterTab(block, _blocks.indexOf(block), textBefore);
       _serializeAndSave(immediate: false);
     }
