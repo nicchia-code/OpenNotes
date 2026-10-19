@@ -142,13 +142,12 @@ class NoteActions {
             .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
             .trim();
         final fileName = '${cleanTitle.isEmpty ? 'Nota' : cleanTitle}.md';
-        Uri? savedUri;
+        String? savedPath;
         try {
-          savedUri = await FilePicker.saveFile(
+          savedPath = await FilePicker.saveFile(
             dialogTitle: 'Esporta come Markdown (.md)',
             fileName: fileName,
             bytes: Uint8List.fromList(utf8.encode(current.toMarkdown())),
-            mimeType: 'text/markdown',
           );
         } catch (error) {
           debugPrint('Markdown export of "$fileName" failed: $error');
@@ -163,8 +162,10 @@ class NoteActions {
           }
           return false;
         }
-        if (savedUri != null) {
-          final savedName = await NoteActions.savedFileNameOf(savedUri);
+        if (savedPath != null) {
+          final savedName = await NoteActions.savedFileNameOf(
+            Uri.file(savedPath),
+          );
           if (context.mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(

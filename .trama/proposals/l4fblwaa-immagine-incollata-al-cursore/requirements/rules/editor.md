@@ -1,0 +1,100 @@
+---
+description: Usare quando si cambia il comportamento dell'editor, cioè caricamento del contenuto, salvataggio ritardato, formattazione, unione di sezioni, tabelle e disegni.
+---
+# Editor rules
+
+## note-content-save
+- La scrittura su disco parte 400 ms dopo l'ultima consegna. C'è un solo timer, condiviso da tutte le note. Quando l'app va in secondo piano o si chiude (anche chiudendo la finestra desktop), la scrittura in attesa parte subito.
+- Se una scrittura fallisce compare l'avviso «Nota non salvata: il salvataggio verrà ritentato.» e la versione non scritta torna in attesa, per essere ritentata alla consegna successiva o al passaggio in secondo piano; l'avviso sparisce alla prima scrittura riuscita. Se al momento del fallimento è già in attesa un'altra versione, quella non scritta viene scartata: se apparteneva a un'altra nota, quella modifica va persa e la nota torna all'ultima versione salvata.
+- Prima di fissare o togliere dalle fissate, proteggere o togliere la protezione, spostare nel cestino, ripristinare (anche con «Annulla») o spostare in un'altra cartella una nota: l'editor consegna subito il testo ancora in attesa, la scrittura in attesa parte subito, anche se riguarda un'altra nota, il comando attende anche una scrittura già in corso e poi agisce sulla versione appena salvata.
+- Prima di duplicare una nota: l'editor consegna subito il testo ancora in attesa e la scrittura in attesa parte subito; la copia nasce dal testo appena salvato, cioè quello visto sullo schermo.
+- Quando viene applicata una versione del cloud protetta, anche di un'altra nota o di una nota già protetta: l'editor consegna subito il testo ancora in attesa e, prima che la nota venga nascosta, la scrittura in attesa parte subito, anche se riguarda un'altra nota.
+- La scrittura riporta sulla nota già salvata solo contenuto, titolo, tag, anteprima e data di modifica; fissaggio, protezione, cartella e cestino cambiati durante l'attesa restano.
+- Titolo ricalcolato a ogni consegna:
+  - è la prima riga utile del primo blocco che ne ha una, escluse immagini e tabelle; una riga è utile se non è vuota, non è fatta di soli tag e ha ancora testo dopo aver tolto i «#» iniziali; nel testo Markdown è la prima riga non vuota che non sia fatta di soli tag;
+  - ha la precedenza un blocco di tipo `title` che abbia una riga utile;
+  - le righe fatte di soli tag vengono saltate anche dentro un blocco che ha altro testo;
+  - perde i «#» iniziali e si taglia a 60 caratteri;
+  - se non c'è, vale «Nuova nota».
+- Tag: ogni «#nome» (lettere e cifre di qualunque alfabeto, «_», «-») all'inizio del testo, dopo uno spazio o dopo una tra «(», «[» e «{», sia nel testo sia nelle celle delle tabelle. Si salvano in minuscolo, senza duplicati e in ordine alfabetico.
+- L'anteprima viene ricalcolata a ogni consegna: circa 90 caratteri, senza il titolo; per una nota protetta è «Questa nota è protetta».
+
+## note-editor
+- Attesa dell'editor: 300 ms. Vale per la digitazione, per Invio, per Backspace dentro una sezione e per Tab. Quando l'app va in secondo piano o si chiude, l'editor consegna subito senza attendere. Tornando all'elenco su mobile (pulsante Indietro, gesto o tasto di sistema) la modifica in attesa non viene scartata: viene consegnata allo scadere dell'attesa, mentre la schermata esce, e poi salvata.
+- Salvataggio immediato, senza attesa:
+  - grassetto, corsivo, sottolineato, barrato;
+  - stile dal menu «Aa»;
+  - pulsante checklist e tocco sul cerchio;
+  - voce del menu rapido e tag scelto o confermato;
+  - unione di sezioni;
+  - ogni modifica di una tabella, carattere per carattere;
+  - inserimento di una tabella, di una foto (scelta da file o incollata) o di un disegno, e rimozione di un'immagine;
+  - nuova sezione creata toccando l'area vuota.
+- Scorciatoie da tastiera: Ctrl/Cmd+B grassetto, Ctrl/Cmd+I corsivo, Ctrl/Cmd+U sottolineato, Ctrl/Cmd+Maiusc+X oppure Ctrl/Cmd+Alt+S barrato. Freccia su all'inizio di una parte passa alla fine della parte precedente; freccia giù alla fine passa all'inizio della successiva.
+- Incolla (Ctrl/Cmd+V oppure la voce «Incolla» del menu contestuale: tasto destro su desktop, pressione prolungata su mobile):
+  - in una sezione di testo, se gli appunti contengono testo semplice si incolla il testo, anche se c'è anche un'immagine; altrimenti, se contengono un'immagine, si incolla l'immagine;
+  - la voce «Incolla» compare anche quando gli appunti contengono solo un'immagine;
+  - in una cella di tabella si incolla solo testo: un'immagine negli appunti viene ignorata;
+  - si incollano solo dati immagine: i file copiati nel Finder o in Esplora risorse non si incollano come immagini;
+  - le immagini inserite dalla tastiera di Android non sono gestite.
+- Immagine incollata:
+  - PNG, JPEG, GIF e WebP si salvano nel loro formato; ogni altro formato (per esempio TIFF o BMP) diventa PNG;
+  - se il lato più lungo supera 2048 px, l'immagine viene rimpicciolita mantenendo le proporzioni finché il lato più lungo è 2048 px;
+  - un'immagine rimpicciolita resta nel suo formato (un JPEG viene riscritto con qualità 85); una WebP rimpicciolita diventa PNG; le GIF non vengono mai rimpicciolite.
+- Formattazione dei caratteri:
+  - con una selezione: se ogni carattere selezionato ha già lo stile, lo toglie; altrimenti lo applica a tutta la selezione;
+  - senza selezione: attiva o disattiva lo stile per il testo che verrà digitato.
+- Normalizzazione degli intervalli:
+  - si tagliano alla lunghezza del testo;
+  - si scartano quelli vuoti o senza stile;
+  - si spezzano ai confini e si fondono quelli adiacenti con gli stessi stili;
+  - il testo inserito dentro un intervallo lo allarga; il testo inserito con stili attivi crea un nuovo intervallo.
+- Caricamento di un contenuto JSON:
+  - i blocchi di testo consecutivi (tutti tranne tabella, immagine e separatore) si fondono in un'unica sezione di testo;
+  - lo stile di una riga è quello salvato; in mancanza, la prima riga di un blocco prende il tipo del blocco;
+  - le righe che cominciano con «### », «## » o «# » perdono il prefisso e diventano `h3`, `h2` oppure `title` (se sono la prima riga della sezione) o `h1`;
+  - i blocchi `bullet`, `numbered`, `checklist`, `quote` e `code` diventano righe di corpo con il prefisso «• », «1. », «○ »/«● » (secondo la spunta del blocco), «> » o «``` »;
+  - «- [ ]» o «[ ]» diventano «○ »; «- [x]» o «[x]» diventano «● »; «- » e «* » diventano «• »;
+  - gli intervalli di formattazione si ricalcolano sulle nuove posizioni;
+  - un documento senza parti riceve una sezione di testo vuota.
+- Caricamento di Markdown o testo semplice:
+  - le righe consecutive che cominciano e finiscono con «|» formano una tabella; le righe separatrici si saltano e le righe corte si completano;
+  - «### », «## » e «# » diventano intestazioni (con `title` sulla prima riga della sezione);
+  - le caselle «- [ ]», «[ ]», «○ » e quelle spuntate diventano «○ »/«● »;
+  - «- », «* », «• », «◦ » e «▪ » diventano il simbolo del livello di rientro;
+  - la prima riga normale che non è fatta solo di tag diventa `title`; se la prima riga è fatta solo di tag, il titolo è la seconda.
+- All'apertura di una sezione, i «# »–«### » rimasti a inizio riga vengono tolti e diventano `h1`–`h3`. Si scartano gli stili di riga oltre l'ultima riga.
+- Unione di una sezione con quella precedente (Backspace all'inizio della sezione):
+  - se la parte precedente è una tabella, un'immagine o un separatore, non si unisce nulla;
+  - i testi si concatenano senza a capo e la formattazione della seconda sezione si sposta della lunghezza della prima;
+  - la prima sezione conserva i suoi stili di riga, mentre quelli della seconda scalano del numero di righe della prima;
+  - se la prima sezione non è vuota e non finisce con un a capo, lo stile della prima riga della seconda si perde; nei conflitti vince la prima;
+  - se la prima sezione è vuota, prende tipo, spunta e stili di riga della seconda;
+  - altrimenti, una prima sezione di tipo titolo o intestazione diventa corpo;
+  - il cursore va nel punto di giunzione.
+- Una versione remota viene caricata solo se è diversa dall'ultimo contenuto consegnato dall'editor e non ci sono modifiche in attesa di essere consegnate. Anche con una riga a fuoco il cursore resta nella stessa riga e posizione se esistono ancora, altrimenti va alla fine della riga più vicina.
+- Tabelle:
+  - una nuova tabella contiene «Colonna 1», «Colonna 2» / «Elemento 1», «Elemento 2»;
+  - «+ Riga» aggiunge una riga in fondo e «+ Colonna» una colonna a destra;
+  - «- Riga» e «- Colonna» tolgono sempre l'ultima, con un minimo di una riga e una colonna;
+  - Tab passa alla cella successiva e, nell'ultima cella, aggiunge una riga; Maiusc+Tab torna alla cella precedente.
+- Inserimento:
+  - una tabella va dopo la parte attiva e, se la parte successiva non è testo, è seguita da una sezione vuota;
+  - una foto scelta da file o un disegno vanno dopo la parte attiva e sono sempre seguiti da una nuova sezione vuota;
+  - un'immagine incollata va nel punto del cursore (vedi sotto);
+  - all'apertura la parte attiva è la seconda, o la prima se ce n'è una sola.
+- Immagine incollata nel punto del cursore:
+  - il punto è la posizione del cursore al momento dell'incolla; se prima che l'immagine sia salvata il testo della sezione cambia prima di quel punto, il punto si sposta con il testo;
+  - con una selezione non vuota, il testo selezionato viene tolto e il punto è l'inizio della selezione;
+  - la sezione si divide nel punto: la prima parte resta nella sezione esistente, poi viene l'immagine, poi una nuova sezione con il resto del testo; entrambe le sezioni restano anche se vuote;
+  - se il testo prima del punto finisce con un a capo, quell'a capo si toglie; altrimenti, se il testo dopo il punto comincia con un a capo, si toglie quello. Si toglie al più un a capo;
+  - la formattazione dei caratteri segue il testo: gli intervalli si tagliano nel punto e quelli della nuova sezione si spostano all'indietro della lunghezza della prima parte;
+  - gli stili di riga delle righe intere restano con la loro riga; quelli della nuova sezione scalano del numero di righe rimaste sopra;
+  - se il punto è a metà di una riga, cioè con testo sia prima sia dopo nella stessa riga, la prima parte della riga tiene il suo tipo e la parte che passa sotto l'immagine segue le regole di Invio senza Maiuscole: voce di checklist → nuova voce «○ » con lo stesso rientro; voce puntata → simbolo del livello; voce numerata → «N+1. » con lo stesso rientro; titolo e intestazioni → corpo; citazione, monospazio e corpo → corpo senza simbolo;
+  - se il punto è all'inizio o alla fine di una riga, nessuna riga prende un nuovo tipo: ogni riga intera tiene il suo;
+  - il cursore va all'inizio della nuova sezione sotto l'immagine;
+  - se la sezione in cui si è incollato non esiste più quando l'immagine è salvata (unita con Backspace o ricaricata) e la nota aperta è la stessa, l'immagine va dopo la parte attiva, seguita da una nuova sezione vuota; se è aperta un'altra nota o nessuna, non viene inserita (il file resta tra gli allegati);
+  - rimuovendo poi l'immagine le due sezioni restano separate.
+
+## drawing-canvas
+- Spessore del tratto: 3 per la penna, 20 per la gomma. L'immagine esportata è 800×600 con sfondo bianco.

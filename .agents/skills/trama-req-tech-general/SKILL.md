@@ -26,7 +26,9 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
 - Stato della rete con `connectivity_plus` (versione stabile più recente compatibile con l'SDK Dart del progetto); su Android il manifest dichiara anche il permesso `ACCESS_NETWORK_STATE`.
 - Visibilità dell'app per la sincronizzazione: su mobile dal ciclo di vita di Flutter (`AppLifecycleListener`), su desktop dagli eventi di riduzione a icona e ripristino di `window_manager`.
 - Canale realtime di Supabase con la callback di stato di `subscribe`; il rinnovo del token è lasciato alla libreria, che lo passa al canale aperto.
-- Esportazione: `share_plus` 13.3.0 per la condivisione, `file_picker` 12.2.0 per la scelta di file e cartelle.
+- Esportazione: `share_plus` 12.0.2 per la condivisione, `file_picker` 11.0.3 per la scelta di file e cartelle.
+- Appunti: `super_clipboard` 0.9.1 legge le immagini dagli appunti su tutte le piattaforme (usa i binari nativi precompilati, senza toolchain Rust in locale né in CI; su Android la build richiede l'NDK); il testo si legge con il `Clipboard` di Flutter.
+- Immagini incollate: ridimensionamento e ricodifica (JPEG, PNG) con `image` (versione stabile più recente compatibile con l'SDK Dart del progetto).
 - Piattaforme: Android (applicationId `com.opennotes.open_notes`, SDK minimo/target di default Flutter), iOS, macOS, Linux, Windows; cartella web presente (manifest di template).
 - Desktop: `window_manager` 0.5.2 con finestra senza barra di sistema (barra del titolo nascosta, barra unificata disegnata dall'app), dimensione iniziale 1280×760, minima 680×480, centrata, sfondo trasparente; su Linux la finestra GTK ha titolo "OpenNotes" e non mostra alcuna barra del titolo, né quella GTK né quella aggiunta dal compositore.
   - L'app chiama `windowManager.show()` e `windowManager.focus()` dopo il primo frame disegnato da `runApp` (callback post-frame), non nella callback di `waitUntilReadyToShow`.

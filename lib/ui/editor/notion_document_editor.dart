@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/cupertino.dart';
@@ -15,7 +16,11 @@ import '../../core/services/vault_service.dart';
 import '../../core/state/notes_provider.dart';
 import '../security/lock_note_dialog.dart';
 import '../theme/apple_theme.dart';
+import 'clipboard_image_reader.dart';
+import 'pasted_image.dart';
 import 'rich_text_editing_controller.dart';
+import 'text_part_context_menu.dart';
+import 'text_part_split.dart';
 
 export '../../core/models/note_model.dart' show BlockType;
 
@@ -1143,6 +1148,136 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
     });
   }
 
+  /// Captures where an image pasted now goes: the text part [block] with its
+  /// text and selection, so the point can follow edits made while the image is
+  /// saved, plus the services the paste needs after the editor may be gone.
+  _ImagePaste _startImagePaste(NoteBlock block) {
+    final controller = block.controller;
+    final text = controller?.text ?? block.text;
+    final selection = controller?.selection;
+    final valid = selection != null && selection.isValid;
+    return _ImagePaste(
+      vault: context.read<VaultService>(),
+      messenger: ScaffoldMessenger.of(context),
+      noteId: widget.note.id,
+      block: block,
+      text: text,
+      start: valid ? selection.start : text.length,
+      end: valid ? selection.end : text.length,
+    );
+  }
+
+  /// Saves the clipboard image and places it at the point captured by [paste].
+  /// Shows a notice when the image cannot be saved or its note is no longer open.
+  Future<void> _pasteClipboardImage(
+    _ImagePaste paste,
+    ClipboardImage clipboard,
+  ) async {
+    final bytes = clipboard.bytes;
+    String? relativePath;
+    try {
+      final prepared = await Isolate.run(() => prepareImageForNote(bytes));
+      if (prepared != null) {
+        relativePath = await paste.vault.saveAttachment(
+          prepared.bytes,
+          prepared.extension,
+        );
+      }
+    } catch (_) {
+      relativePath = null;
+    }
+    if (relativePath == null || !mounted || widget.note.id != paste.noteId) {
+      paste.messenger.showSnackBar(
+        const SnackBar(content: Text('Immagine non incollata')),
+      );
+      return;
+    }
+    if (_blocks.contains(paste.block)) {
+      _insertPastedImage(paste, relativePath);
+    } else {
+      insertImage(relativePath);
+    }
+  }
+
+  /// Divides the text part of [paste] at its point and puts the image between
+  /// the two parts. Both parts are kept, even when empty.
+  void _insertPastedImage(_ImagePaste paste, String relativePath) {
+    final block = paste.block;
+    final controller = block.controller;
+    final currentText = controller?.text ?? block.text;
+    final split = splitTextPartForImage(
+      text: currentText,
+      spans: controller?.spans ?? block.spans,
+      lineStyles: controller?.lineStyles ?? block.lineStyles,
+      start: mapOffsetThroughEdit(paste.text, currentText, paste.start),
+      end: mapOffsetThroughEdit(paste.text, currentText, paste.end),
+    );
+    final imageBlock = NoteBlock(
+      id: _uuid.v4(),
+      type: BlockType.image,
+      text: relativePath,
+    );
+    final afterBlock = NoteBlock(
+      id: _uuid.v4(),
+      type: BlockType.paragraph,
+      text: split.after,
+      spans: split.afterSpans,
+      lineStyles: split.afterLineStyles,
+    );
+    _setTextPart(
+      block,
+      split.before,
+      split.beforeSpans,
+      split.beforeLineStyles,
+    );
+    final index = _blocks.indexOf(block);
+    setState(() {
+      _blocks.insert(index + 1, imageBlock);
+      _blocks.insert(index + 2, afterBlock);
+      _activeBlock = afterBlock;
+    });
+    _serializeAndSave();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      afterBlock.focusNode?.requestFocus();
+      afterBlock.controller?.selection = const TextSelection.collapsed(
+        offset: 0,
+      );
+    });
+  }
+
+  /// Replaces the text, spans and line styles of the text part [block], keeping
+  /// its controller in step with the stored fields.
+  void _setTextPart(
+    NoteBlock block,
+    String text,
+    List<StyleSpan> spans,
+    Map<int, BlockType> lineStyles,
+  ) {
+    block.text = text;
+    block.spans = spans;
+    block.lineStyles = lineStyles;
+    final controller = block.controller;
+    if (controller != null) {
+      controller.spans = List.of(spans);
+      controller.lineStyles = Map.of(lineStyles);
+      controller.replaceTextWithoutReconciliation(text);
+      controller.selection = TextSelection.collapsed(offset: text.length);
+    }
+  }
+
+  /// Ctrl/Cmd+V in a text part: pastes the clipboard image only when the
+  /// clipboard holds no text, since the field itself pastes text.
+  Future<void> _pasteImageIfNoText(NoteBlock block) async {
+    final paste = _startImagePaste(block);
+    final text = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted || (text?.text ?? '').isNotEmpty) return;
+    final image = await readPastedImage();
+    if (image != null) {
+      await _pasteClipboardImage(paste, image);
+    }
+  }
+
   /// Inserts an image block
   void insertImage(String relativePath) {
     final newBlock = NoteBlock(
@@ -1387,6 +1522,11 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       key: ValueKey('tf_${block.id}'),
       controller: block.controller,
       focusNode: block.focusNode,
+      contextMenuBuilder: (context, editableTextState) => TextPartContextMenu(
+        editableTextState: editableTextState,
+        onPasteImage: (image) =>
+            _pasteClipboardImage(_startImagePaste(block), image),
+      ),
       maxLines: null,
       cursorColor: AppleTheme.accentYellow,
       cursorWidth: 2.0,
@@ -2294,6 +2434,13 @@ class NotionDocumentEditorState extends State<NotionDocumentEditor> {
       return KeyEventResult.handled;
     }
 
+    // CTRL/CMD+V: the field pastes text as usual; an image is pasted only
+    // when the clipboard holds no text.
+    if (isCtrlOrCmd && event.logicalKey == LogicalKeyboardKey.keyV) {
+      unawaited(_pasteImageIfNoText(block));
+      return KeyEventResult.ignored;
+    }
+
     final ctrl = block.controller;
     final sel = ctrl?.selection ?? const TextSelection.collapsed(offset: -1);
 
@@ -3064,4 +3211,27 @@ class _InteractiveTableBlockState extends State<InteractiveTableBlock> {
       ),
     );
   }
+}
+
+/// The point where a clipboard image is pasted, taken when the paste starts:
+/// the text part and its selection, with the services needed once the image is
+/// saved.
+class _ImagePaste {
+  const _ImagePaste({
+    required this.vault,
+    required this.messenger,
+    required this.noteId,
+    required this.block,
+    required this.text,
+    required this.start,
+    required this.end,
+  });
+
+  final VaultService vault;
+  final ScaffoldMessengerState messenger;
+  final String noteId;
+  final NoteBlock block;
+  final String text;
+  final int start;
+  final int end;
 }

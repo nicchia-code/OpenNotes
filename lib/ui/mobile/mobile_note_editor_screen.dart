@@ -124,14 +124,13 @@ class _MobileNoteEditorScreenState extends State<MobileNoteEditorScreen> {
 
   Future<void> _onPhoto(BuildContext context) async {
     final vault = context.read<VaultService>();
-    final result = await FilePickerPlatform.instance.pickFiles(
-      type: FileType.image,
-    );
-    if (result.isNotEmpty && result.first.path != null) {
-      final file = File(result.first.path!);
+    final result = await FilePicker.pickFiles(type: FileType.image);
+    final picked = result?.files ?? const <PlatformFile>[];
+    if (picked.isNotEmpty && picked.first.path != null) {
+      final file = File(picked.first.path!);
       final bytes = await file.readAsBytes();
       if (!mounted) return;
-      final ext = result.first.extension ?? 'png';
+      final ext = picked.first.extension ?? 'png';
       final relativePath = await vault.saveAttachment(bytes, ext);
       _editorKey.currentState?.insertImage(relativePath);
     }

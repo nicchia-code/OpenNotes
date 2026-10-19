@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.0 - 2026-10-19
+- Added pasting an image into a note: Ctrl/Cmd+V and the Paste menu entry insert the image on the clipboard when the clipboard holds an image and no text; text on the clipboard is still pasted when it also holds an image.
+- Changed the dependencies: `file_picker` 11.0.3, `share_plus` 12.0.2, and the clipboard reader `super_clipboard` 0.9.1 with `image` 4.12.0.
+
 ## 0.3.0 - 2026-10-18
 - Removed the PDF export of a note: the app no longer builds, bundles, or ships the PDF fonts, and the `pdf` and `printing` dependencies are gone. Sharing and Markdown export are unchanged.
 - Changed the macOS app icon: it is a single full-bleed layer in an Icon Composer file, so macOS 26 and later show it without the grey tile, and the macOS CI job builds with Xcode 26 on a macOS 26 runner.

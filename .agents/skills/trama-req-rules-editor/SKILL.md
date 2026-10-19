@@ -36,9 +36,19 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
   - voce del menu rapido e tag scelto o confermato;
   - unione di sezioni;
   - ogni modifica di una tabella, carattere per carattere;
-  - inserimento di una tabella, di una foto o di un disegno, e rimozione di un'immagine;
+  - inserimento di una tabella, di una foto (scelta da file o incollata) o di un disegno, e rimozione di un'immagine;
   - nuova sezione creata toccando l'area vuota.
 - Scorciatoie da tastiera: Ctrl/Cmd+B grassetto, Ctrl/Cmd+I corsivo, Ctrl/Cmd+U sottolineato, Ctrl/Cmd+Maiusc+X oppure Ctrl/Cmd+Alt+S barrato. Freccia su all'inizio di una parte passa alla fine della parte precedente; freccia giù alla fine passa all'inizio della successiva.
+- Incolla (Ctrl/Cmd+V oppure la voce «Incolla» del menu contestuale: tasto destro su desktop, pressione prolungata su mobile):
+  - in una sezione di testo, se gli appunti contengono testo semplice si incolla il testo, anche se c'è anche un'immagine; altrimenti, se contengono un'immagine, si incolla l'immagine;
+  - la voce «Incolla» compare anche quando gli appunti contengono solo un'immagine;
+  - in una cella di tabella si incolla solo testo: un'immagine negli appunti viene ignorata;
+  - si incollano solo dati immagine: i file copiati nel Finder o in Esplora risorse non si incollano come immagini;
+  - le immagini inserite dalla tastiera di Android non sono gestite.
+- Immagine incollata:
+  - PNG, JPEG, GIF e WebP si salvano nel loro formato; ogni altro formato (per esempio TIFF o BMP) diventa PNG;
+  - se il lato più lungo supera 2048 px, l'immagine viene rimpicciolita mantenendo le proporzioni finché il lato più lungo è 2048 px;
+  - un'immagine rimpicciolita resta nel suo formato (un JPEG viene riscritto con qualità 85); una WebP rimpicciolita diventa PNG; le GIF non vengono mai rimpicciolite.
 - Formattazione dei caratteri:
   - con una selezione: se ogni carattere selezionato ha già lo stile, lo toglie; altrimenti lo applica a tutta la selezione;
   - senza selezione: attiva o disattiva lo stile per il testo che verrà digitato.
@@ -78,8 +88,21 @@ A section titled with a Model reference (such as `order/Paid`) applies to that e
   - Tab passa alla cella successiva e, nell'ultima cella, aggiunge una riga; Maiusc+Tab torna alla cella precedente.
 - Inserimento:
   - una tabella va dopo la parte attiva e, se la parte successiva non è testo, è seguita da una sezione vuota;
-  - un'immagine va dopo la parte attiva ed è sempre seguita da una nuova sezione vuota;
+  - una foto scelta da file o un disegno vanno dopo la parte attiva e sono sempre seguiti da una nuova sezione vuota;
+  - un'immagine incollata va nel punto del cursore (vedi sotto);
   - all'apertura la parte attiva è la seconda, o la prima se ce n'è una sola.
+- Immagine incollata nel punto del cursore:
+  - il punto è la posizione del cursore al momento dell'incolla; se prima che l'immagine sia salvata il testo della sezione cambia prima di quel punto, il punto si sposta con il testo;
+  - con una selezione non vuota, il testo selezionato viene tolto e il punto è l'inizio della selezione;
+  - la sezione si divide nel punto: la prima parte resta nella sezione esistente, poi viene l'immagine, poi una nuova sezione con il resto del testo; entrambe le sezioni restano anche se vuote;
+  - se il testo prima del punto finisce con un a capo, quell'a capo si toglie; altrimenti, se il testo dopo il punto comincia con un a capo, si toglie quello. Si toglie al più un a capo;
+  - la formattazione dei caratteri segue il testo: gli intervalli si tagliano nel punto e quelli della nuova sezione si spostano all'indietro della lunghezza della prima parte;
+  - gli stili di riga delle righe intere restano con la loro riga; quelli della nuova sezione scalano del numero di righe rimaste sopra;
+  - se il punto è a metà di una riga, cioè con testo sia prima sia dopo nella stessa riga, la prima parte della riga tiene il suo tipo e la parte che passa sotto l'immagine segue le regole di Invio senza Maiuscole: voce di checklist → nuova voce «○ » con lo stesso rientro; voce puntata → simbolo del livello; voce numerata → «N+1. » con lo stesso rientro; titolo e intestazioni → corpo; citazione, monospazio e corpo → corpo senza simbolo;
+  - se il punto è all'inizio o alla fine di una riga, nessuna riga prende un nuovo tipo: ogni riga intera tiene il suo;
+  - il cursore va all'inizio della nuova sezione sotto l'immagine;
+  - se la sezione in cui si è incollato non esiste più quando l'immagine è salvata (unita con Backspace o ricaricata) e la nota aperta è la stessa, l'immagine va dopo la parte attiva, seguita da una nuova sezione vuota; se è aperta un'altra nota o nessuna, non viene inserita (il file resta tra gli allegati);
+  - rimuovendo poi l'immagine le due sezioni restano separate.
 
 ## drawing-canvas
 

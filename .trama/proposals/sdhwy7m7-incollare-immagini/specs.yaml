@@ -1,0 +1,12 @@
+languages:
+  - name: Dart
+    version: "^3.11.4"
+frameworks:
+  - name: Flutter
+  - name: super_clipboard
+    version: "0.9.1"
+    note: legge le immagini dagli appunti di sistema per incollarle nelle note
+  - name: image
+    note: ridimensiona e ricodifica le immagini incollate
+notes: |
+  Le altre librerie e i vincoli di build sono descritti nei Requirements dell'area `tech`.

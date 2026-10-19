@@ -136,6 +136,9 @@ L'utente modifica una cella di una tabella oppure aggiunge o toglie una riga o u
 ### INSERT_PHOTO
 L'utente sceglie un'immagine nel selettore di file di sistema per inserirla nella nota.
 
+### PASTE_IMAGE
+L'utente incolla in una sezione di testo della nota, con Ctrl/Cmd+V o con la voce «Incolla» del menu contestuale, mentre gli appunti del sistema contengono un'immagine e nessun testo.
+
 ### REMOVE_IMAGE
 L'utente preme il cestino su un'immagine della nota.
 

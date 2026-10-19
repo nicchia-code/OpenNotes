@@ -25,7 +25,7 @@ description: Usare quando si legge, si scrive o si converte il contenuto di una 
   - rientro di due spazi per livello.
 - Blocco immagine: `text` contiene il percorso relativo dell'allegato nel vault («attachments/…») oppure un percorso assoluto.
 - Blocco tabella: una matrice di stringhe in cui la prima riga è l'intestazione. Le righe più corte vengono completate con celle vuote.
-- Allegati: file nella cartella `attachments` del vault, con nome «att_<millisecondi>.<estensione>». L'estensione è quella del file scelto, oppure `png` se manca.
+- Allegati: file nella cartella `attachments` del vault, con nome «att_<millisecondi>.<estensione>». L'estensione è quella del file scelto, oppure `png` se manca. Per un'immagine incollata è quella del formato salvato: `png`, `jpg`, `gif` o `webp`.
 
 ## drawing-canvas
 - Il disegno esportato è un'immagine PNG di 800×600 pixel con sfondo bianco, salvata come allegato con estensione `png`.
