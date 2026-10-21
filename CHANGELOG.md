@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.0 - 2026-10-21
+- Changed the app icon: the new OpenNotes artwork replaces the old one on desktop, macOS (Icon Composer file), Windows, Linux and the AppImage, Android, iOS, and the web favicon and icons, and the Android and iOS launch screens show it too.
+
 ## 0.4.0 - 2026-10-19
 - Added pasting an image into a note: Ctrl/Cmd+V and the Paste menu entry insert the image on the clipboard when the clipboard holds an image and no text; text on the clipboard is still pasted when it also holds an image.
 - Changed the dependencies: `file_picker` 11.0.3, `share_plus` 12.0.2, and the clipboard reader `super_clipboard` 0.9.1 with `image` 4.12.0.
